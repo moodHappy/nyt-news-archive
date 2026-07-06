@@ -1,8 +1,13 @@
 Name: Auto Scrape NYT Chinese
 
-# 触发条件：手动触发
+# 触发条件：每周一次定时触发 + 手动触发 + 代码更新触发
 on:
+  schedule:
+    - cron: '0 0 * * 0'  # 每周日运行一次 (基于 UTC 时间，北京时间早上 8 点)
   workflow_dispatch:     # 允许你在 GitHub Actions 网页上手动点击运行
+  push:
+    paths:
+      - 'nyt_reader.py'  # 只有当这个 Python 文件发生修改并提交时，才会自动触发运行一次
 
 jobs:
   build:
