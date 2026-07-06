@@ -10,23 +10,7 @@
         
         .container { max-width: 600px; margin: 0 auto; background: var(--bg); min-height: 100vh; display: flex; flex-direction: column; }
         
-        .header-brand { background: var(--card); padding: 15px 20px 5px 20px; font-weight: bold; font-family: "Georgia", serif; font-size: 1.2rem; border-bottom: 1px solid #111; text-align: center; letter-spacing: 1px;}
-        
-        .manual-fetch-bar { background: var(--card); padding: 12px 15px; display: flex; gap: 10px; align-items: center; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 20; box-shadow: 0 2px 10px rgba(0,0,0,0.03); }
-        .fetch-input { flex: 1; padding: 10px 15px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; outline: none; background: #fafafa; transition: border 0.2s; }
-        .fetch-input:focus { border-color: var(--primary); background: #fff; }
-        .settings-btn { background: none; border: none; font-size: 20px; cursor: pointer; padding: 5px; }
-        
-        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 100; justify-content: center; align-items: center; padding: 20px; }
-        .modal-content { background: var(--card); border-radius: 8px; padding: 20px; width: 100%; max-width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); }
-        .modal-title { margin: 0 0 15px 0; font-size: 18px; font-weight: bold; border-bottom: 1px solid #eee; padding-bottom: 10px;}
-        .form-group { margin-bottom: 15px; }
-        .form-group label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; font-weight: bold; }
-        .form-group input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; outline: none; }
-        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
-        .btn { padding: 8px 16px; border-radius: 4px; border: none; font-size: 14px; font-weight: bold; cursor: pointer; }
-        .btn-cancel { background: #eee; color: #333; }
-        .btn-save { background: var(--primary); color: #fff; }
+        .header-brand { background: var(--card); padding: 15px 20px 15px 20px; font-weight: bold; font-family: "Georgia", serif; font-size: 1.2rem; border-bottom: 1px solid var(--border); text-align: center; letter-spacing: 1px;}
 
         #loadingBar { height: 3px; background: var(--primary); width: 0%; transition: width 0.3s; position: absolute; top: 0; left: 0; z-index: 30; }
 
@@ -72,34 +56,6 @@
     
     <div class="header-brand">T H E&nbsp;&nbsp;N E W&nbsp;&nbsp;Y O R K&nbsp;&nbsp;T I M E S</div>
 
-    <div class="manual-fetch-bar">
-        <input type="text" id="nytUrlInput" class="fetch-input" placeholder="粘贴 NYT 中文文章链接，回车生成..." autocomplete="off">
-        <button class="settings-btn" onclick="openSettings()">⚙️</button>
-    </div>
-
-    <div class="modal-overlay" id="settingsModal">
-        <div class="modal-content">
-            <h3 class="modal-title">本地配置中心</h3>
-            <p style="font-size:12px; color:#888; margin-top:-10px; margin-bottom:15px;">密钥仅保存在您的浏览器本地，不会上传到任何第三方服务器。</p>
-            <div class="form-group">
-                <label>GitHub Personal Access Token</label>
-                <input type="password" id="cfgGhToken" placeholder="ghp_...">
-            </div>
-            <div class="form-group">
-                <label>GitHub 用户名</label>
-                <input type="text" id="cfgGhOwner" value="moodHappy" placeholder="例如: moodHappy">
-            </div>
-            <div class="form-group">
-                <label>GitHub 仓库名</label>
-                <input type="text" id="cfgGhRepo" placeholder="例如: nyt-news-archive">
-            </div>
-            <div class="modal-actions">
-                <button class="btn btn-cancel" onclick="closeSettings()">取消</button>
-                <button class="btn btn-save" onclick="saveSettings()">保存配置</button>
-            </div>
-        </div>
-    </div>
-
     <div class="container">
         <div class="controls">
             <button class="control-btn" id="prevBtn">&lt;</button>
@@ -134,7 +90,8 @@
             setTimeout(() => { toast.classList.remove('show'); }, duration);
         }
 
-        const archiveData = /*DATA_START*/{"2026":{"7":{"6":[{"time":"22:42","path":"2026/7/2026_7_6_2242_nyt.html","title":"As Xi Looks to Extend His Rule, He Leans on a Longtime Ally"}]}}}/*DATA_END*/;
+        const loadingBar = document.getElementById('loadingBar');
+        const archiveData = /*DATA_START*/{"2026": {"7": {"6": [{"time": "22:42", "path": "2026/7/2026_7_6_2242_nyt.html", "title": "As Xi Looks to Extend His Rule, He Leans on a Longtime Ally"}]}}}/*DATA_END*/;
         
         const today = new Date();
         let currentYear = today.getFullYear();
@@ -248,25 +205,6 @@
             }
         }
 
-        const modal = document.getElementById('settingsModal');
-        const nytUrlInput = document.getElementById('nytUrlInput');
-        const loadingBar = document.getElementById('loadingBar');
-
-        function openSettings() {
-            document.getElementById('cfgGhToken').value = localStorage.getItem('GH_TOKEN_NYT') || '';
-            document.getElementById('cfgGhOwner').value = localStorage.getItem('GH_OWNER_NYT') || 'moodHappy';
-            document.getElementById('cfgGhRepo').value = localStorage.getItem('GH_REPO_NYT') || '';
-            modal.style.display = 'flex';
-        }
-        function closeSettings() { modal.style.display = 'none'; }
-        function saveSettings() {
-            localStorage.setItem('GH_TOKEN_NYT', document.getElementById('cfgGhToken').value.trim());
-            localStorage.setItem('GH_OWNER_NYT', document.getElementById('cfgGhOwner').value.trim());
-            localStorage.setItem('GH_REPO_NYT', document.getElementById('cfgGhRepo').value.trim());
-            closeSettings();
-            showToast('✅ 配置已保存');
-        }
-
         let lastTap = 0;
         const calWrapper = document.querySelector('.calendar-wrapper');
         calWrapper.addEventListener('click', function(e) {
@@ -338,189 +276,6 @@
                 loadingBar.style.width = '0%';
                 showToast('❌ 云端同步删除失败');
             }
-        }
-
-        nytUrlInput.addEventListener('keypress', async function (e) {
-            if (e.key === 'Enter') {
-                const url = nytUrlInput.value.trim();
-                if (!url.includes('cn.nytimes.com')) {
-                    showToast('⚠️ 请输入有效的 纽约时报中文网 链接');
-                    return;
-                }
-                
-                const ghToken = localStorage.getItem('GH_TOKEN_NYT');
-                const ghOwner = localStorage.getItem('GH_OWNER_NYT');
-                const ghRepo = localStorage.getItem('GH_REPO_NYT');
-                
-                if (!ghToken || !ghOwner || !ghRepo) {
-                    showToast('⚠️ 请先点击齿轮图标配置 GitHub 密钥');
-                    openSettings();
-                    return;
-                }
-
-                loadingBar.style.width = '10%';
-                nytUrlInput.disabled = true;
-                showToast('⏳ 正在抓取文章并上传...');
-
-                try {
-                    loadingBar.style.width = '30%';
-                    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-                    const res = await fetch(proxyUrl);
-                    if (!res.ok) throw new Error("代理服务请求失败");
-                    const proxyData = await res.json();
-                    
-                    if (!proxyData.contents) throw new Error("代理未返回有效的网页内容");
-
-                    loadingBar.style.width = '50%';
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(proxyData.contents, 'text/html');
-                    
-                    const titleTag = doc.querySelector('h1');
-                    const title = titleTag ? titleTag.textContent.trim() : "NYT Chinese News";
-                    
-                    const pTags = doc.querySelectorAll('p');
-                    let contentParagraphs = [];
-                    pTags.forEach(p => {
-                        let text = p.textContent.trim();
-                        if (text.length > 5 && 
-                            !text.includes("版权所有") && 
-                            !text.includes("未经许可，") && 
-                            !text.includes("欢迎在")) {
-                            contentParagraphs.push(`<p>${text}</p>`);
-                        }
-                    });
-
-                    if (contentParagraphs.length === 0) throw new Error("未在此页面解析到文章正文");
-
-                    loadingBar.style.width = '65%';
-                    
-                    const now = new Date();
-                    const year = now.getFullYear().toString();
-                    const month = (now.getMonth() + 1).toString();
-                    const day = now.getDate().toString();
-                    const hhmmStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-                    const hhmmFile = String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
-                    const pub_date = `${year}-${month.padStart(2,'0')}-${day.padStart(2,'0')} ${hhmmStr}`;
-                    
-                    const filename = `${year}_${month}_${day}_${hhmmFile}_custom.html`;
-                    const fileRelPath = `${year}/${month}/${filename}`;
-                    const fileApiPath = `docs/${year}/${month}/${filename}`;
-                    
-                    const htmlOutput = generateBaseHTMLString(title, contentParagraphs.join('\n'), pub_date, url);
-
-                    loadingBar.style.width = '75%';
-                    const uploadRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/${fileApiPath}`, {
-                        method: 'PUT',
-                        headers: { 'Authorization': `token ${ghToken}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            message: `Add custom NYT news: ${title}`,
-                            content: btoa(unescape(encodeURIComponent(htmlOutput)))
-                        })
-                    });
-                    if (!uploadRes.ok) throw new Error("文章上传失败，请检查密钥权限或仓库名");
-
-                    loadingBar.style.width = '85%';
-                    const idxRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html`, {
-                        headers: { 'Authorization': `token ${ghToken}` }
-                    });
-                    if (!idxRes.ok) throw new Error("获取远程 index.html 失败");
-                    
-                    const idxData = await idxRes.json();
-                    const idxContent = decodeURIComponent(escape(atob(idxData.content)));
-
-                    const dataStart = idxContent.indexOf('/*DATA_START*/') + 14;
-                    const dataEnd = idxContent.indexOf('/*DATA_END*/');
-                    const oldJsonStr = idxContent.substring(dataStart, dataEnd);
-                    const archiveObj = JSON.parse(oldJsonStr);
-
-                    if (!archiveObj[year]) archiveObj[year] = {};
-                    if (!archiveObj[year][month]) archiveObj[year][month] = {};
-                    if (!archiveObj[year][month][day]) archiveObj[year][month][day] = [];
-                    
-                    const newItem = {
-                        time: hhmmStr,
-                        path: fileRelPath,
-                        title: title
-                    };
-                    archiveObj[year][month][day].unshift(newItem);
-
-                    const newJsonStr = JSON.stringify(archiveObj);
-                    const newIdxContent = idxContent.substring(0, dataStart) + newJsonStr + idxContent.substring(dataEnd);
-                    
-                    loadingBar.style.width = '95%';
-                    await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html`, {
-                        method: 'PUT',
-                        headers: { 'Authorization': `token ${ghToken}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            message: `Update calendar with custom NYT article`,
-                            content: btoa(unescape(encodeURIComponent(newIdxContent))),
-                            sha: idxData.sha
-                        })
-                    });
-
-                    if (!archiveData[year]) archiveData[year] = {};
-                    if (!archiveData[year][month]) archiveData[year][month] = {};
-                    if (!archiveData[year][month][day]) archiveData[year][month][day] = [];
-                    archiveData[year][month][day].unshift(newItem);
-
-                    selectedYear = parseInt(year);
-                    selectedMonth = parseInt(month);
-                    selectedDay = parseInt(day);
-                    
-                    initSelects();
-                    renderCalendar(selectedYear, selectedMonth);
-                    renderNews(selectedYear, selectedMonth, selectedDay);
-
-                    loadingBar.style.width = '100%';
-                    nytUrlInput.value = '';
-                    setTimeout(() => { loadingBar.style.width = '0%'; }, 1000);
-                    
-                    showToast('🎉 文章抓取并保存成功！');
-
-                } catch (err) {
-                    console.error('Fetch failed:', err);
-                    loadingBar.style.width = '0%';
-                    showToast('❌ 操作失败: ' + err.message);
-                } finally {
-                    nytUrlInput.disabled = false;
-                }
-            }
-        });
-
-        function generateBaseHTMLString(title, p_tags, pub_date, article_url) {
-            return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${title}</title>
-    <style>
-        :root { --bg: #fdfbf7; --card: #ffffff; --text: #333333; --muted: #888888; --accent: #1955a5; }
-        body { font-family: "Georgia", "Times New Roman", "Songti SC", "SimSun", serif; -webkit-font-smoothing: antialiased; text-align: left; font-size: 1.25rem; line-height: 1.8; color: var(--text); background: var(--bg); margin: 0; padding: 0; }
-        .container { max-width: 760px; margin: 0 auto; background: var(--card); padding: 50px 30px; min-height: 100vh; box-shadow: 0 4px 24px rgba(0,0,0,0.03); box-sizing: border-box; border-left: 1px solid #eaeaea; border-right: 1px solid #eaeaea; }
-        h1 { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; font-size: 1.9rem; margin-top: 0; padding-bottom: 20px; border-bottom: 2px solid #111; line-height: 1.4; color: #111; }
-        .meta { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 0.9rem; color: var(--muted); margin-bottom: 35px; display: flex; flex-wrap: nowrap; gap: 10px; align-items: center; white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
-        .meta::-webkit-scrollbar { display: none; }
-        .meta span { flex-shrink: 0; }
-        .meta a { color: var(--accent); text-decoration: none; background: #f4f8fc; padding: 6px 12px; border-radius: 4px; font-weight: 500; transition: background 0.2s; flex-shrink: 0; border: 1px solid #e1ebf5; }
-        .meta a:hover { background: #e1ebf5; }
-        p { margin-bottom: 1.5em; text-align: justify; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>${title}</h1>
-        <div class="meta">
-            <span>📅 ${pub_date}</span>
-            <a href="${article_url}" target="_blank">🔗 阅读原文</a>
-            <a href="../../index.html">🔙 返回日历</a>
-        </div>
-        <div class="content">
-            ${p_tags}
-        </div>
-    </div>
-</body>
-</html>`;
         }
 
         yearSelect.addEventListener('change', (e) => { renderCalendar(parseInt(e.target.value), parseInt(monthSelect.value)); });
