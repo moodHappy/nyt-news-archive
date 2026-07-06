@@ -1,4 +1,4 @@
-Name: Auto Scrape NYT Chinese
+name: Auto Scrape NYT Chinese
 
 # 触发条件：每周一次定时触发 + 手动触发 + 代码更新触发
 on:
