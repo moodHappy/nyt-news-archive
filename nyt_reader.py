@@ -270,141 +270,204 @@ def generate_index():
 
         const loadingBar = document.getElementById('loadingBar');
         const archiveData = /*DATA_START*/REPLACEME_JSON_DATA/*DATA_END*/;
-        
         const today = new Date();
-        let currentYear = today.getFullYear();
-        let currentMonth = today.getMonth() + 1;
-        let selectedDay = today.getDate();
-        let selectedYear = currentYear;
-        let selectedMonth = currentMonth;
         
-        window.deleteMode = false;
+        // ================= 1. 终极修复：单向状态机管控 =================
+        const AppState = {
+            year: today.getFullYear(),
+            month: today.getMonth() + 1,
+            day: today.getDate(),
+            deleteMode: false
+        };
 
-        const yearSelect = document.getElementById('yearSelect');
-        const monthSelect = document.getElementById('monthSelect');
-        const daysGrid = document.getElementById('daysGrid');
-        const newsList = document.getElementById('newsList');
+        function ensureYearExists(y) {
+            const yearSelect = document.getElementById('yearSelect');
+            if (!Array.from(yearSelect.options).some(opt => parseInt(opt.value, 10) === y)) {
+                const opt = document.createElement('option');
+                opt.value = y; 
+                opt.textContent = y + ' 年';
+                yearSelect.appendChild(opt);
+                
+                // 重新排序保证最新年份在上方
+                const options = Array.from(yearSelect.options);
+                options.sort((a, b) => parseInt(b.value, 10) - parseInt(a.value, 10));
+                yearSelect.innerHTML = '';
+                options.forEach(o => yearSelect.appendChild(o));
+            }
+        }
 
         function initSelects() {
+            const yearSelect = document.getElementById('yearSelect');
             yearSelect.innerHTML = '';
-            // 使用 Set 收集数据中已有的年份
-            const yearsSet = new Set(Object.keys(archiveData).map(Number));
             
-            // 确保日历选择器在当前年份的基础上向后延续50年
+            const yearsSet = new Set(Object.keys(archiveData).map(Number));
             for (let i = 0; i <= 50; i++) {
-                yearsSet.add(currentYear + i);
+                yearsSet.add(today.getFullYear() + i);
             }
             
-            // 转换为数组并降序排列（最新年份在最上）
             const years = Array.from(yearsSet).sort((a, b) => b - a);
-            
             years.forEach(y => {
                 const opt = document.createElement('option');
-                opt.value = y; opt.textContent = y + ' 年';
+                opt.value = y; 
+                opt.textContent = y + ' 年';
                 yearSelect.appendChild(opt);
             });
-            yearSelect.value = selectedYear;
-            monthSelect.value = selectedMonth;
         }
 
-        function renderCalendar(year, month) {
+        // ================= 2. 暴力重绘引擎 (解决旧内容残留核心) =================
+        function forceRender() {
+            ensureYearExists(AppState.year);
+            
+            // 修正跨月导致的无效日期（例如切到2月，防止31号残留）
+            const maxDay = new Date(AppState.year, AppState.month, 0).getDate();
+            if (AppState.day > maxDay) AppState.day = maxDay;
+
+            // 强制同步下拉菜单 UI
+            document.getElementById('yearSelect').value = AppState.year;
+            document.getElementById('monthSelect').value = AppState.month;
+
+            const daysGrid = document.getElementById('daysGrid');
+            const newsList = document.getElementById('newsList');
+
+            // 彻底抹除旧节点，免疫原生 DOM 刷新失效的怪异问题
             daysGrid.innerHTML = '';
-            const firstDay = new Date(year, month - 1, 1).getDay();
-            const startDay = firstDay === 0 ? 7 : firstDay;
-            const daysInMonth = new Date(year, month, 0).getDate();
-            
-            for (let i = 1; i < startDay; i++) {
-                const emptyCell = document.createElement('div');
-                emptyCell.className = 'day-cell empty';
-                daysGrid.appendChild(emptyCell);
-            }
-            
-            const monthData = (archiveData[year] && archiveData[year][month]) ? archiveData[year][month] : {};
-            
-            for (let day = 1; day <= daysInMonth; day++) {
-                const cell = document.createElement('div');
-                cell.className = 'day-cell';
-                cell.textContent = day;
+            newsList.innerHTML = '';
+
+            try {
+                // 渲染日历网格
+                const firstDay = new Date(AppState.year, AppState.month - 1, 1).getDay();
+                const startDay = firstDay === 0 ? 7 : firstDay;
                 
-                const dot = document.createElement('div');
-                dot.className = 'dot';
-                cell.appendChild(dot);
-                
-                if (monthData[day] && monthData[day].length > 0) {
-                    cell.classList.add('has-news');
-                } else {
-                    cell.classList.add('no-news');
+                for (let i = 1; i < startDay; i++) {
+                    const emptyCell = document.createElement('div');
+                    emptyCell.className = 'day-cell empty';
+                    daysGrid.appendChild(emptyCell);
                 }
                 
-                if (year === today.getFullYear() && month === today.getMonth() + 1 && day === today.getDate()) cell.classList.add('today');
-                if (year === selectedYear && month === selectedMonth && day === selectedDay) cell.classList.add('selected');
+                let monthData = {};
+                if (archiveData[AppState.year] && archiveData[AppState.year][AppState.month]) {
+                    monthData = archiveData[AppState.year][AppState.month];
+                }
                 
-                cell.addEventListener('click', () => {
-                    selectedYear = year; selectedMonth = month; selectedDay = day;
-                    renderCalendar(year, month);
-                    renderNews(year, month, day);
-                });
-                
-                daysGrid.appendChild(cell);
-            }
-        }
-
-        function renderNews(year, month, day) {
-            newsList.innerHTML = '';
-            const monthData = (archiveData[year] && archiveData[year][month]) ? archiveData[year][month] : null;
-            const dayData = monthData ? monthData[day] : null;
-            
-            if (dayData && dayData.length > 0) {
-                dayData.forEach((news, index) => {
-                    const wrapper = document.createElement('div');
-                    wrapper.className = 'news-item-wrapper';
-
-                    const a = document.createElement('a');
-                    a.href = news.path;
-                    a.className = 'news-item';
-                    a.innerHTML = `<span class="news-time">${news.time}</span><span class="news-title">${news.title}</span>`;
-                    wrapper.appendChild(a);
-
-                    const delBtn = document.createElement('button');
-                    delBtn.className = 'delete-btn';
-                    delBtn.innerHTML = '🗑️';
-                    if (window.deleteMode) delBtn.style.display = 'block';
+                for (let day = 1; day <= maxDay; day++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'day-cell';
+                    cell.textContent = day;
                     
-                    delBtn.onclick = async (e) => {
-                        e.preventDefault();
-                        if(confirm('确认删除此条目并同步删除云端文件吗？')) {
-                            const pathToDelete = news.path;
-                            dayData.splice(index, 1);
-                            if (dayData.length === 0) delete archiveData[year][month][day];
-                            renderCalendar(year, month);
-                            renderNews(year, month, day);
-                            await syncDeleteToGithub(pathToDelete);
-                            showToast('🗑️ 已删除该文章');
-                        }
+                    const dot = document.createElement('div');
+                    dot.className = 'dot';
+                    cell.appendChild(dot);
+                    
+                    if (monthData[day] && monthData[day].length > 0) cell.classList.add('has-news');
+                    else cell.classList.add('no-news');
+                    
+                    if (AppState.year === today.getFullYear() && AppState.month === today.getMonth() + 1 && day === today.getDate()) cell.classList.add('today');
+                    if (day === AppState.day) cell.classList.add('selected');
+                    
+                    cell.onclick = () => {
+                        AppState.day = day;
+                        forceRender();
                     };
-                    wrapper.appendChild(delBtn);
+                    daysGrid.appendChild(cell);
+                }
+            } catch (err) { console.error("日历渲染异常:", err); }
 
-                    newsList.appendChild(wrapper);
-                });
-            } else {
+            try {
+                // 渲染新闻列表（安全链式查找）
+                let dayData = null;
+                if (archiveData[AppState.year] && archiveData[AppState.year][AppState.month] && archiveData[AppState.year][AppState.month][AppState.day]) {
+                    dayData = archiveData[AppState.year][AppState.month][AppState.day];
+                }
+                
+                if (dayData && Array.isArray(dayData) && dayData.length > 0) {
+                    dayData.forEach((news, index) => {
+                        const wrapper = document.createElement('div');
+                        wrapper.className = 'news-item-wrapper';
+
+                        const a = document.createElement('a');
+                        a.href = news.path;
+                        a.className = 'news-item';
+                        a.innerHTML = `<span class="news-time">${news.time}</span><span class="news-title">${news.title}</span>`;
+                        wrapper.appendChild(a);
+
+                        const delBtn = document.createElement('button');
+                        delBtn.className = 'delete-btn';
+                        delBtn.innerHTML = '🗑️';
+                        if (AppState.deleteMode) delBtn.style.display = 'block';
+                        
+                        delBtn.onclick = async (e) => {
+                            e.preventDefault();
+                            if(confirm('确认删除此条目并同步删除云端文件吗？')) {
+                                const pathToDelete = news.path;
+                                dayData.splice(index, 1);
+                                if (dayData.length === 0) delete archiveData[AppState.year][AppState.month][AppState.day];
+                                forceRender(); // 强刷状态
+                                await syncDeleteToGithub(pathToDelete);
+                                showToast('🗑️ 已删除该文章');
+                            }
+                        };
+                        wrapper.appendChild(delBtn);
+                        newsList.appendChild(wrapper);
+                    });
+                } else {
+                    newsList.innerHTML = '<div class="empty-state">No articles found for this date.</div>';
+                }
+            } catch (err) { 
+                console.error("内容列表渲染异常:", err); 
                 newsList.innerHTML = '<div class="empty-state">No articles found for this date.</div>';
             }
         }
 
+        // ================= 3. 完全分离的事件绑定器 =================
+        document.getElementById('yearSelect').addEventListener('change', (e) => {
+            AppState.year = parseInt(e.target.value, 10);
+            forceRender();
+        });
+        
+        document.getElementById('monthSelect').addEventListener('change', (e) => {
+            AppState.month = parseInt(e.target.value, 10);
+            forceRender();
+        });
+        
+        document.getElementById('prevBtn').addEventListener('click', () => {
+            AppState.month--;
+            if (AppState.month < 1) { 
+                AppState.month = 12; 
+                AppState.year--; 
+            }
+            forceRender();
+        });
+        
+        document.getElementById('nextBtn').addEventListener('click', () => {
+            AppState.month++;
+            if (AppState.month > 12) { 
+                AppState.month = 1; 
+                AppState.year++; 
+            }
+            forceRender();
+        });
+        
+        document.getElementById('todayBtn').addEventListener('click', () => {
+            AppState.year = today.getFullYear(); 
+            AppState.month = today.getMonth() + 1; 
+            AppState.day = today.getDate();
+            forceRender();
+        });
+
         let lastTap = 0;
-        const calWrapper = document.querySelector('.calendar-wrapper');
-        calWrapper.addEventListener('click', function(e) {
+        document.querySelector('.calendar-wrapper').addEventListener('click', function(e) {
             const currentTime = new Date().getTime();
             const tapLength = currentTime - lastTap;
             if (tapLength < 500 && tapLength > 0) {
-                window.deleteMode = !window.deleteMode;
+                AppState.deleteMode = !AppState.deleteMode;
                 const btns = document.querySelectorAll('.delete-btn');
-                btns.forEach(btn => btn.style.display = window.deleteMode ? 'block' : 'none');
+                btns.forEach(btn => btn.style.display = AppState.deleteMode ? 'block' : 'none');
                 e.preventDefault();
             }
             lastTap = currentTime;
         });
 
+        // ================= 4. GitHub 同步删除逻辑 (与 DOM 解耦) =================
         async function syncDeleteToGithub(fileRelPath) {
             const ghToken = localStorage.getItem('GH_TOKEN_NYT');
             const ghOwner = localStorage.getItem('GH_OWNER_NYT');
@@ -464,54 +527,10 @@ def generate_index():
             }
         }
 
-        yearSelect.addEventListener('change', (e) => { renderCalendar(parseInt(e.target.value), parseInt(monthSelect.value)); });
-        monthSelect.addEventListener('change', (e) => { renderCalendar(parseInt(yearSelect.value), parseInt(e.target.value)); });
-        
-        document.getElementById('prevBtn').addEventListener('click', () => {
-            let m = parseInt(monthSelect.value) - 1; let y = parseInt(yearSelect.value);
-            if (m < 1) { 
-                m = 12; y--; 
-                // 防止一直往前点超出已加载年份，动态添加并重新排序
-                if (!Array.from(yearSelect.options).some(opt => parseInt(opt.value) === y)) {
-                    const opt = document.createElement('option');
-                    opt.value = y; opt.textContent = y + ' 年';
-                    yearSelect.appendChild(opt);
-                    const options = Array.from(yearSelect.options);
-                    options.sort((a, b) => parseInt(b.value) - parseInt(a.value));
-                    yearSelect.innerHTML = '';
-                    options.forEach(o => yearSelect.appendChild(o));
-                }
-            }
-            monthSelect.value = m; yearSelect.value = y; renderCalendar(y, m);
-        });
-        
-        document.getElementById('nextBtn').addEventListener('click', () => {
-            let m = parseInt(monthSelect.value) + 1; let y = parseInt(yearSelect.value);
-            if (m > 12) { 
-                m = 1; y++; 
-                // 防止一直往后点超出已加载年份，动态添加并重新排序
-                if (!Array.from(yearSelect.options).some(opt => parseInt(opt.value) === y)) {
-                    const opt = document.createElement('option');
-                    opt.value = y; opt.textContent = y + ' 年';
-                    yearSelect.appendChild(opt);
-                    const options = Array.from(yearSelect.options);
-                    options.sort((a, b) => parseInt(b.value) - parseInt(a.value));
-                    yearSelect.innerHTML = '';
-                    options.forEach(o => yearSelect.appendChild(o));
-                }
-            }
-            monthSelect.value = m; yearSelect.value = y; renderCalendar(y, m);
-        });
-        
-        document.getElementById('todayBtn').addEventListener('click', () => {
-            selectedYear = today.getFullYear(); selectedMonth = today.getMonth() + 1; selectedDay = today.getDate();
-            yearSelect.value = selectedYear; monthSelect.value = selectedMonth;
-            renderCalendar(selectedYear, selectedMonth); renderNews(selectedYear, selectedMonth, selectedDay);
-        });
-
+        // 首次启动注入
         initSelects();
-        renderCalendar(currentYear, currentMonth);
-        renderNews(currentYear, currentMonth, selectedDay);
+        forceRender();
+
     </script>
 </body>
 </html>"""
