@@ -109,8 +109,16 @@
 
         function initSelects() {
             yearSelect.innerHTML = '';
-            const years = Object.keys(archiveData).map(Number).sort((a, b) => b - a);
-            if (!years.includes(currentYear)) years.unshift(currentYear);
+            // 使用 Set 收集数据中已有的年份
+            const yearsSet = new Set(Object.keys(archiveData).map(Number));
+            
+            // 确保日历选择器在当前年份的基础上向后延续50年
+            for (let i = 0; i <= 50; i++) {
+                yearsSet.add(currentYear + i);
+            }
+            
+            // 转换为数组并降序排列（最新年份在最上）
+            const years = Array.from(yearsSet).sort((a, b) => b - a);
             
             years.forEach(y => {
                 const opt = document.createElement('option');
@@ -280,16 +288,43 @@
 
         yearSelect.addEventListener('change', (e) => { renderCalendar(parseInt(e.target.value), parseInt(monthSelect.value)); });
         monthSelect.addEventListener('change', (e) => { renderCalendar(parseInt(yearSelect.value), parseInt(e.target.value)); });
+        
         document.getElementById('prevBtn').addEventListener('click', () => {
             let m = parseInt(monthSelect.value) - 1; let y = parseInt(yearSelect.value);
-            if (m < 1) { m = 12; y--; yearSelect.value = y; }
-            monthSelect.value = m; renderCalendar(y, m);
+            if (m < 1) { 
+                m = 12; y--; 
+                // 防止一直往前点超出已加载年份，动态添加并重新排序
+                if (!Array.from(yearSelect.options).some(opt => parseInt(opt.value) === y)) {
+                    const opt = document.createElement('option');
+                    opt.value = y; opt.textContent = y + ' 年';
+                    yearSelect.appendChild(opt);
+                    const options = Array.from(yearSelect.options);
+                    options.sort((a, b) => parseInt(b.value) - parseInt(a.value));
+                    yearSelect.innerHTML = '';
+                    options.forEach(o => yearSelect.appendChild(o));
+                }
+            }
+            monthSelect.value = m; yearSelect.value = y; renderCalendar(y, m);
         });
+        
         document.getElementById('nextBtn').addEventListener('click', () => {
             let m = parseInt(monthSelect.value) + 1; let y = parseInt(yearSelect.value);
-            if (m > 12) { m = 1; y++; yearSelect.value = y; }
-            monthSelect.value = m; renderCalendar(y, m);
+            if (m > 12) { 
+                m = 1; y++; 
+                // 防止一直往后点超出已加载年份，动态添加并重新排序
+                if (!Array.from(yearSelect.options).some(opt => parseInt(opt.value) === y)) {
+                    const opt = document.createElement('option');
+                    opt.value = y; opt.textContent = y + ' 年';
+                    yearSelect.appendChild(opt);
+                    const options = Array.from(yearSelect.options);
+                    options.sort((a, b) => parseInt(b.value) - parseInt(a.value));
+                    yearSelect.innerHTML = '';
+                    options.forEach(o => yearSelect.appendChild(o));
+                }
+            }
+            monthSelect.value = m; yearSelect.value = y; renderCalendar(y, m);
         });
+        
         document.getElementById('todayBtn').addEventListener('click', () => {
             selectedYear = today.getFullYear(); selectedMonth = today.getMonth() + 1; selectedDay = today.getDate();
             yearSelect.value = selectedYear; monthSelect.value = selectedMonth;
