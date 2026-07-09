@@ -19,10 +19,8 @@ def fetch_nyt_news():
         soup = BeautifulSoup(response.text, 'html.parser')
 
         article_url = None
-        # 寻找头条文章链接。NYT中文网的文章通常包含日期或者类别，过滤掉纯导航或视频
         for a_tag in soup.find_all('a', href=True):
             href = a_tag['href']
-            # 文章链接特征：通常包含多个斜杠，不包含特定排除词
             if href.startswith('/') and len(href.split('/')) > 3:
                 if not href.startswith('/video/') and not href.startswith('/podcasts/') and 'index.html' not in href:
                     article_url = "https://cn.nytimes.com" + href
@@ -50,7 +48,6 @@ def fetch_nyt_news():
         art_res.encoding = 'utf-8'
         art_soup = BeautifulSoup(art_res.text, 'html.parser')
 
-        # 纽约时报中文网标题通常在 h1 或 article-header 中
         title_tag = art_soup.find('h1')
         title = title_tag.text.strip() if title_tag else "NYT Chinese News"
 
@@ -62,7 +59,6 @@ def fetch_nyt_news():
 
         for p in paragraphs:
             text = p.text.strip()
-            # 过滤过短文本及版权、翻译免责声明等
             if len(text) <= 5: continue
             if "版权所有" in text and "纽约时报" in text: continue
             if "未经许可，" in text: continue
@@ -127,6 +123,29 @@ def save_article(title, paragraphs, pub_date, article_url, now_obj):
     print(f"文章已保存: {html_path}")
 
 def generate_index():
+    # --- 1. 读取旧 index.html，提取被置顶的文章路径 ---
+    pinned_paths = set()
+    index_path = os.path.join(BASE_DIR, "index.html")
+    if os.path.exists(index_path):
+        try:
+            with open(index_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                start_marker = "/*DATA_START*/"
+                end_marker = "/*DATA_END*/"
+                start = content.find(start_marker)
+                end = content.find(end_marker)
+                if start != -1 and end != -1:
+                    old_json_str = content[start+len(start_marker):end]
+                    old_data = json.loads(old_json_str)
+                    for y_data in old_data.values():
+                        for m_data in y_data.values():
+                            for d_data in m_data.values():
+                                for item in d_data:
+                                    if item.get("pinned"):
+                                        pinned_paths.add(item["path"])
+        except Exception as e:
+            print(f"读取历史置顶状态失败: {e}")
+
     archive_data = {}
 
     if os.path.exists(BASE_DIR):
@@ -166,11 +185,16 @@ def generate_index():
                             if d_key not in archive_data[y_key][m_key]:
                                 archive_data[y_key][m_key][d_key] = []
 
-                            archive_data[y_key][m_key][d_key].append({
+                            # --- 2. 重新生成数据时，恢复置顶标记 ---
+                            item_data = {
                                 "time": time_str,
                                 "path": file_path,
                                 "title": page_title
-                            })
+                            }
+                            if file_path in pinned_paths:
+                                item_data["pinned"] = True
+
+                            archive_data[y_key][m_key][d_key].append(item_data)
                     except Exception:
                         pass
 
@@ -217,10 +241,12 @@ def generate_index():
         .news-item-wrapper { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
         .news-item { flex: 1; background: var(--card); border-radius: 6px; padding: 18px 15px; margin-bottom: 0; display: flex; justify-content: space-between; align-items: center; text-decoration: none; color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.05); overflow: hidden; border-left: 3px solid transparent; transition: border-left 0.2s; }
         .news-item:hover { border-left: 3px solid var(--primary); }
+        .news-item.pinned-item { border-left: 3px solid #f5a623; } /* 置顶UI标记 */
         .news-time { font-size: 13px; font-family: "Georgia", serif; font-weight: 600; flex-shrink: 0; color: var(--primary); }
         .news-title { font-size: 15px; margin-left: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; flex: 1; }
         
         .delete-btn { background: #d93025; color: white; border: none; border-radius: 4px; padding: 0 15px; height: 50px; font-size: 16px; cursor: pointer; display: none; transition: all 0.2s; flex-shrink: 0; }
+        .pin-btn { background: #f5a623; color: white; border: none; border-radius: 4px; padding: 0 15px; height: 50px; font-size: 16px; cursor: pointer; display: none; transition: all 0.2s; flex-shrink: 0; }
 
         .empty-state { text-align: center; padding: 50px 20px; color: #aaa; font-style: italic; }
 
@@ -272,7 +298,6 @@ def generate_index():
         const archiveData = /*DATA_START*/REPLACEME_JSON_DATA/*DATA_END*/;
         const today = new Date();
         
-        // ================= 1. 终极修复：单向状态机管控 =================
         const AppState = {
             year: today.getFullYear(),
             month: today.getMonth() + 1,
@@ -288,7 +313,6 @@ def generate_index():
                 opt.textContent = y + ' 年';
                 yearSelect.appendChild(opt);
                 
-                // 重新排序保证最新年份在上方
                 const options = Array.from(yearSelect.options);
                 options.sort((a, b) => parseInt(b.value, 10) - parseInt(a.value, 10));
                 yearSelect.innerHTML = '';
@@ -314,27 +338,37 @@ def generate_index():
             });
         }
 
-        // ================= 2. 暴力重绘引擎 (解决旧内容残留核心) =================
+        // 提取所有的置顶文章
+        function getAllPinnedNews() {
+            let pinned = [];
+            for (let y in archiveData) {
+                for (let m in archiveData[y]) {
+                    for (let d in archiveData[y][m]) {
+                        archiveData[y][m][d].forEach(news => {
+                            if (news.pinned) pinned.push(news);
+                        });
+                    }
+                }
+            }
+            return pinned;
+        }
+
         function forceRender() {
             ensureYearExists(AppState.year);
             
-            // 修正跨月导致的无效日期（例如切到2月，防止31号残留）
             const maxDay = new Date(AppState.year, AppState.month, 0).getDate();
             if (AppState.day > maxDay) AppState.day = maxDay;
 
-            // 强制同步下拉菜单 UI
             document.getElementById('yearSelect').value = AppState.year;
             document.getElementById('monthSelect').value = AppState.month;
 
             const daysGrid = document.getElementById('daysGrid');
             const newsList = document.getElementById('newsList');
 
-            // 彻底抹除旧节点，免疫原生 DOM 刷新失效的怪异问题
             daysGrid.innerHTML = '';
             newsList.innerHTML = '';
 
             try {
-                // 渲染日历网格
                 const firstDay = new Date(AppState.year, AppState.month - 1, 1).getDay();
                 const startDay = firstDay === 0 ? 7 : firstDay;
                 
@@ -373,23 +407,45 @@ def generate_index():
             } catch (err) { console.error("日历渲染异常:", err); }
 
             try {
-                // 渲染新闻列表（安全链式查找）
-                let dayData = null;
+                const allPinned = getAllPinnedNews();
+                let dayData = [];
                 if (archiveData[AppState.year] && archiveData[AppState.year][AppState.month] && archiveData[AppState.year][AppState.month][AppState.day]) {
                     dayData = archiveData[AppState.year][AppState.month][AppState.day];
                 }
                 
-                if (dayData && Array.isArray(dayData) && dayData.length > 0) {
-                    dayData.forEach((news, index) => {
+                // 去重合并：当前天的非置顶数据
+                const currentDayUnpinned = (dayData || []).filter(n => !n.pinned);
+                const itemsToRender = [...allPinned, ...currentDayUnpinned];
+                
+                if (itemsToRender.length > 0) {
+                    itemsToRender.forEach((news, index) => {
                         const wrapper = document.createElement('div');
                         wrapper.className = 'news-item-wrapper';
 
                         const a = document.createElement('a');
                         a.href = news.path;
-                        a.className = 'news-item';
-                        a.innerHTML = `<span class="news-time">${news.time}</span><span class="news-title">${news.title}</span>`;
+                        a.className = 'news-item' + (news.pinned ? ' pinned-item' : '');
+                        
+                        const pinEmoji = news.pinned ? '📌 ' : '';
+                        a.innerHTML = `<span class="news-time">${news.time}</span><span class="news-title">${pinEmoji}${news.title}</span>`;
                         wrapper.appendChild(a);
 
+                        // 置顶按钮
+                        const pinBtn = document.createElement('button');
+                        pinBtn.className = 'pin-btn';
+                        pinBtn.innerHTML = news.pinned ? '❌' : '📌';
+                        if (AppState.deleteMode) pinBtn.style.display = 'block';
+                        
+                        pinBtn.onclick = async (e) => {
+                            e.preventDefault();
+                            news.pinned = !news.pinned;
+                            forceRender(); 
+                            await syncIndexToGithub();
+                            showToast(news.pinned ? '📌 已置顶' : '❌ 已取消置顶');
+                        };
+                        wrapper.appendChild(pinBtn);
+
+                        // 删除按钮
                         const delBtn = document.createElement('button');
                         delBtn.className = 'delete-btn';
                         delBtn.innerHTML = '🗑️';
@@ -399,9 +455,24 @@ def generate_index():
                             e.preventDefault();
                             if(confirm('确认删除此条目并同步删除云端文件吗？')) {
                                 const pathToDelete = news.path;
-                                dayData.splice(index, 1);
-                                if (dayData.length === 0) delete archiveData[AppState.year][AppState.month][AppState.day];
-                                forceRender(); // 强刷状态
+                                // 全局查找并删除
+                                let found = false;
+                                for (let y in archiveData) {
+                                    for (let m in archiveData[y]) {
+                                        for (let d in archiveData[y][m]) {
+                                            const arr = archiveData[y][m][d];
+                                            const idx = arr.findIndex(item => item.path === pathToDelete);
+                                            if (idx !== -1) {
+                                                arr.splice(idx, 1);
+                                                if (arr.length === 0) delete archiveData[y][m][d];
+                                                found = true; break;
+                                            }
+                                        }
+                                        if(found) break;
+                                    }
+                                    if(found) break;
+                                }
+                                forceRender();
                                 await syncDeleteToGithub(pathToDelete);
                                 showToast('🗑️ 已删除该文章');
                             }
@@ -418,7 +489,6 @@ def generate_index():
             }
         }
 
-        // ================= 3. 完全分离的事件绑定器 =================
         document.getElementById('yearSelect').addEventListener('change', (e) => {
             AppState.year = parseInt(e.target.value, 10);
             forceRender();
@@ -460,14 +530,52 @@ def generate_index():
             const tapLength = currentTime - lastTap;
             if (tapLength < 500 && tapLength > 0) {
                 AppState.deleteMode = !AppState.deleteMode;
-                const btns = document.querySelectorAll('.delete-btn');
+                const btns = document.querySelectorAll('.delete-btn, .pin-btn');
                 btns.forEach(btn => btn.style.display = AppState.deleteMode ? 'block' : 'none');
                 e.preventDefault();
             }
             lastTap = currentTime;
         });
 
-        // ================= 4. GitHub 同步删除逻辑 (与 DOM 解耦) =================
+        // 仅同步 Index 更新（用于保存置顶状态）
+        async function syncIndexToGithub() {
+            const ghToken = localStorage.getItem('GH_TOKEN_NYT');
+            const ghOwner = localStorage.getItem('GH_OWNER_NYT');
+            const ghRepo = localStorage.getItem('GH_REPO_NYT');
+            if (!ghToken || !ghOwner || !ghRepo) return;
+
+            try {
+                loadingBar.style.width = '30%';
+                const idxRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html`, {
+                    headers: { 'Authorization': `token ${ghToken}` }
+                });
+                const idxData = await idxRes.json();
+                const idxContent = decodeURIComponent(escape(atob(idxData.content)));
+
+                const dataStart = idxContent.indexOf('/*DATA_START*/') + 14;
+                const dataEnd = idxContent.indexOf('/*DATA_END*/');
+                const newJsonStr = JSON.stringify(archiveData);
+                const newIdxContent = idxContent.substring(0, dataStart) + newJsonStr + idxContent.substring(dataEnd);
+
+                loadingBar.style.width = '70%';
+                await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html`, {
+                    method: 'PUT',
+                    headers: { 'Authorization': `token ${ghToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: `Update index.html pinned status`,
+                        content: btoa(unescape(encodeURIComponent(newIdxContent))),
+                        sha: idxData.sha
+                    })
+                });
+                loadingBar.style.width = '100%';
+                setTimeout(() => { loadingBar.style.width = '0%'; }, 1000);
+            } catch(e) {
+                console.error("Sync pin status failed", e);
+                loadingBar.style.width = '0%';
+                showToast('❌ 云端同步置顶状态失败');
+            }
+        }
+
         async function syncDeleteToGithub(fileRelPath) {
             const ghToken = localStorage.getItem('GH_TOKEN_NYT');
             const ghOwner = localStorage.getItem('GH_OWNER_NYT');
@@ -527,7 +635,6 @@ def generate_index():
             }
         }
 
-        // 首次启动注入
         initSelects();
         forceRender();
 
@@ -542,7 +649,7 @@ def generate_index():
 
     with open(os.path.join(BASE_DIR, "index.html"), "w", encoding="utf-8") as f:
         f.write(final_html)
-    print("首页 index.html 已更新。")
+    print("首页 index.html 已更新，置顶功能已加入。")
 
 if __name__ == "__main__":
     os.makedirs(BASE_DIR, exist_ok=True)
