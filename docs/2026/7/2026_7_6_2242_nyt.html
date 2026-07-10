@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title></title>
+    <title>As Xi Looks to Extend His Rule, He Leans on a Longtime Ally</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         :root { --bg: #f5f5f7; --card: #ffffff; --text: #1d1d1f; --muted: #86868b; --accent: #121212; }
@@ -42,9 +42,9 @@
 </head>
 <body>
     <div class="container">
-        <h1></h1>
+        <h1>As Xi Looks to Extend His Rule, He Leans on a Longtime Ally</h1>
         <div class="meta">
-            <span>📅 2026-07-10 21:53</span>
+            <span>📅 2026-07-10 22:00</span>
             <a href="https://cn.nytimes.com/china/20260706/china-xi-leadership-cai-qi/dual/" target="_blank">🔗 阅读原文</a>
             <a href="../../index.html">🔙 返回日历</a>
             <span class="sync-status" id="sync-status">📡 同步中...</span>
@@ -605,12 +605,8 @@
                 const binaryString = String.fromCodePoint(...utf8Encode);
                 const base64Html = btoa(binaryString);
 
-                // 添加时间戳，彻底打破 GitHub API 缓存限制
-                const getRes = await fetch(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${fileRelPath}?t=${Date.now()}`, {
-                    headers: {
-                        'Authorization': `token ${token}`,
-                        'Cache-Control': 'no-cache'
-                    }
+                const getRes = await fetch(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${fileRelPath}`, {
+                    headers: { 'Authorization': `token ${token}` }
                 });
                 const fileData = await getRes.json();
 
