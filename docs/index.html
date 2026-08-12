@@ -39,7 +39,7 @@
         .news-item-wrapper { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
         .news-item { flex: 1; background: var(--card); border-radius: 6px; padding: 18px 15px; margin-bottom: 0; display: flex; justify-content: space-between; align-items: center; text-decoration: none; color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.05); overflow: hidden; border-left: 3px solid transparent; transition: border-left 0.2s; }
         .news-item:hover { border-left: 3px solid var(--primary); }
-        .news-item.pinned-item { border-left: 3px solid #f5a623; } /* 置顶UI标记 */
+        .news-item.pinned-item { border-left: 3px solid #f5a623; }
         .news-time { font-size: 13px; font-family: "Georgia", serif; font-weight: 600; flex-shrink: 0; color: var(--primary); }
         .news-title { font-size: 15px; margin-left: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; flex: 1; }
         
@@ -93,7 +93,7 @@
         }
 
         const loadingBar = document.getElementById('loadingBar');
-        const archiveData = /*DATA_START*/{"2026":{"7":{"6":[{"time":"22:42","path":"2026/7/2026_7_6_2242_nyt.html","title":"As Xi Looks to Extend His Rule, He Leans on a Longtime Ally","pinned":true}]},"8":{}}}/*DATA_END*/;
+        const archiveData = /*DATA_START*/{"2026": {"7": {"6": [{"time": "22:42", "path": "2026/7/2026_7_6_2242_nyt.html", "title": "As Xi Looks to Extend His Rule, He Leans on a Longtime Ally", "pinned": true}]}, "8": {"12": [{"time": "22:00", "path": "2026/8/2026_8_12_2200_nyt.html", "title": "Zhu Rongji, Former Premier Who Pushed China to a Market Economy, Dies at 97"}, {"time": "21:21", "path": "2026/8/2026_8_12_2121_nyt.html", "title": "Zhu Rongji, Former Premier Who Pushed China to a Market Economy, Dies at 97"}]}}}/*DATA_END*/;
         const today = new Date();
         
         const AppState = {
@@ -136,7 +136,6 @@
             });
         }
 
-        // 提取所有的置顶文章
         function getAllPinnedNews() {
             let pinned = [];
             for (let y in archiveData) {
@@ -211,7 +210,6 @@
                     dayData = archiveData[AppState.year][AppState.month][AppState.day];
                 }
                 
-                // 去重合并：当前天的非置顶数据
                 const currentDayUnpinned = (dayData || []).filter(n => !n.pinned);
                 const itemsToRender = [...allPinned, ...currentDayUnpinned];
                 
@@ -228,7 +226,6 @@
                         a.innerHTML = `<span class="news-time">${news.time}</span><span class="news-title">${pinEmoji}${news.title}</span>`;
                         wrapper.appendChild(a);
 
-                        // 置顶按钮
                         const pinBtn = document.createElement('button');
                         pinBtn.className = 'pin-btn';
                         pinBtn.innerHTML = news.pinned ? '❌' : '📌';
@@ -243,7 +240,6 @@
                         };
                         wrapper.appendChild(pinBtn);
 
-                        // 删除按钮
                         const delBtn = document.createElement('button');
                         delBtn.className = 'delete-btn';
                         delBtn.innerHTML = '🗑️';
@@ -253,7 +249,6 @@
                             e.preventDefault();
                             if(confirm('确认删除此条目并同步删除云端文件吗？')) {
                                 const pathToDelete = news.path;
-                                // 全局查找并删除
                                 let found = false;
                                 for (let y in archiveData) {
                                     for (let m in archiveData[y]) {
@@ -335,17 +330,16 @@
             lastTap = currentTime;
         });
 
-        // 仅同步 Index 更新（用于保存置顶状态）
         async function syncIndexToGithub() {
-            const ghToken = localStorage.getItem('GH_TOKEN_NYT');
-            const ghOwner = localStorage.getItem('GH_OWNER_NYT');
-            const ghRepo = localStorage.getItem('GH_REPO_NYT');
+            const ghToken = localStorage.getItem('GH_TOKEN_NYT') || localStorage.getItem('GH_TOKEN');
+            const ghOwner = localStorage.getItem('GH_OWNER_NYT') || localStorage.getItem('GH_OWNER');
+            const ghRepo = localStorage.getItem('GH_REPO_NYT') || localStorage.getItem('GH_REPO');
             if (!ghToken || !ghOwner || !ghRepo) return;
 
             try {
                 loadingBar.style.width = '30%';
-                const idxRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html`, {
-                    headers: { 'Authorization': `token ${ghToken}` }
+                const idxRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html?t=${Date.now()}`, {
+                    headers: { 'Authorization': `token ${ghToken}` }, cache: 'no-store'
                 });
                 const idxData = await idxRes.json();
                 const idxContent = decodeURIComponent(escape(atob(idxData.content)));
@@ -375,17 +369,17 @@
         }
 
         async function syncDeleteToGithub(fileRelPath) {
-            const ghToken = localStorage.getItem('GH_TOKEN_NYT');
-            const ghOwner = localStorage.getItem('GH_OWNER_NYT');
-            const ghRepo = localStorage.getItem('GH_REPO_NYT');
+            const ghToken = localStorage.getItem('GH_TOKEN_NYT') || localStorage.getItem('GH_TOKEN');
+            const ghOwner = localStorage.getItem('GH_OWNER_NYT') || localStorage.getItem('GH_OWNER');
+            const ghRepo = localStorage.getItem('GH_REPO_NYT') || localStorage.getItem('GH_REPO');
             if (!ghToken || !ghOwner || !ghRepo) return;
 
             try {
                 loadingBar.style.width = '10%';
                 
                 const targetFilePath = `docs/${fileRelPath}`;
-                const fileRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/${targetFilePath}`, {
-                    headers: { 'Authorization': `token ${ghToken}` }
+                const fileRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/${targetFilePath}?t=${Date.now()}`, {
+                    headers: { 'Authorization': `token ${ghToken}` }, cache: 'no-store'
                 });
                 
                 if (fileRes.ok) {
@@ -402,8 +396,8 @@
                 
                 loadingBar.style.width = '50%';
 
-                const idxRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html`, {
-                    headers: { 'Authorization': `token ${ghToken}` }
+                const idxRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html?t=${Date.now()}`, {
+                    headers: { 'Authorization': `token ${ghToken}` }, cache: 'no-store'
                 });
                 const idxData = await idxRes.json();
                 const idxContent = decodeURIComponent(escape(atob(idxData.content)));
