@@ -48,8 +48,44 @@ def fetch_nyt_news():
         art_res.encoding = 'utf-8'
         art_soup = BeautifulSoup(art_res.text, 'html.parser')
 
-        title_tag = art_soup.find('h1')
-        title = title_tag.text.strip() if title_tag else "NYT Chinese News"
+        # --- 核心修复：对齐 JS 版本的双语标题剥离与排雷机制 ---
+        zh_title = ""
+        en_title = ""
+        
+        # 过滤掉 logo 和空标签
+        title_tags = art_soup.find_all('h1')
+        valid_h1s = [h for h in title_tags if 'logo' not in h.get('class', []) and len(h.text.strip()) > 2]
+
+        if valid_h1s:
+            zh_node = next((h for h in valid_h1s if 'en-title' not in h.get('class', [])), None)
+            en_node = next((h for h in valid_h1s if 'en-title' in h.get('class', [])), None)
+            
+            if zh_node and en_node:
+                zh_title = zh_node.text.strip()
+                en_title = en_node.text.strip()
+            elif len(valid_h1s) >= 2:
+                zh_title = valid_h1s[0].text.strip()
+                en_title = valid_h1s[1].text.strip()
+            else:
+                en_title = valid_h1s[0].text.strip()
+
+        # Meta 兜底
+        if not en_title:
+            meta_og = art_soup.find('meta', property='og:title')
+            if meta_og and meta_og.get('content'):
+                en_title = meta_og['content'].strip()
+            else:
+                en_title = "NYT Chinese News"
+
+        # 清理多余的网站名后缀
+        en_title = en_title.replace(' - 纽约时报中文网', '').strip()
+        if zh_title:
+            zh_title = zh_title.replace(' - 纽约时报中文网', '').strip()
+
+        # 供日历检索的纯净英文标题
+        page_title = en_title
+        # 供正文展示的双语换行大标题
+        display_h1 = f"{zh_title}<br>{en_title}" if zh_title else en_title
 
         now = datetime.now(tz_utc_8)
         current_time = now.strftime("%Y-%m-%d %H:%M")
@@ -66,14 +102,14 @@ def fetch_nyt_news():
             content_paragraphs.append(text)
 
         if content_paragraphs:
-            save_article(title, content_paragraphs, current_time, article_url, now)
+            save_article(page_title, display_h1, content_paragraphs, current_time, article_url, now)
         else:
             print("未提取到有效正文段落。")
 
     except Exception as e:
         print(f"抓取错误: {e}")
 
-def save_article(title, paragraphs, pub_date, article_url, now_obj):
+def save_article(page_title, display_h1, paragraphs, pub_date, article_url, now_obj):
     year_str, month_str = str(now_obj.year), str(now_obj.month)
 
     target_dir = os.path.join(BASE_DIR, year_str, month_str)
@@ -89,7 +125,7 @@ def save_article(title, paragraphs, pub_date, article_url, now_obj):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title}</title>
+    <title>{page_title}</title>
     <style>
         :root {{ --bg: #fdfbf7; --card: #ffffff; --text: #333333; --muted: #888888; --accent: #1955a5; }}
         body {{ font-family: "Georgia", "Times New Roman", "Songti SC", "SimSun", serif; -webkit-font-smoothing: antialiased; text-align: left; font-size: 1.25rem; line-height: 1.8; color: var(--text); background: var(--bg); margin: 0; padding: 0; }}
@@ -105,7 +141,7 @@ def save_article(title, paragraphs, pub_date, article_url, now_obj):
 </head>
 <body>
     <div class="container">
-        <h1>{title}</h1>
+        <h1>{display_h1}</h1>
         <div class="meta">
             <span>📅 {pub_date}</span>
             <a href="{article_url}" target="_blank">🔗 阅读原文</a>
@@ -123,8 +159,10 @@ def save_article(title, paragraphs, pub_date, article_url, now_obj):
     print(f"文章已保存: {html_path}")
 
 def generate_index():
-    # --- 1. 读取旧 index.html，提取被置顶的文章路径 ---
     pinned_paths = set()
+    archive_data = {}
+    
+    # --- 核心修复 2：不再抹除旧数据，而是继承合并 ---
     index_path = os.path.join(BASE_DIR, "index.html")
     if os.path.exists(index_path):
         try:
@@ -136,26 +174,26 @@ def generate_index():
                 end = content.find(end_marker)
                 if start != -1 and end != -1:
                     old_json_str = content[start+len(start_marker):end]
-                    old_data = json.loads(old_json_str)
-                    for y_data in old_data.values():
+                    archive_data = json.loads(old_json_str) # 继承已有云端数据
+                    
+                    for y_data in archive_data.values():
                         for m_data in y_data.values():
                             for d_data in m_data.values():
                                 for item in d_data:
                                     if item.get("pinned"):
                                         pinned_paths.add(item["path"])
         except Exception as e:
-            print(f"读取历史置顶状态失败: {e}")
+            print(f"读取历史记录失败: {e}")
 
-    archive_data = {}
-
+    # 将本地扫描的新文件合并进 archive_data
     if os.path.exists(BASE_DIR):
-        years = [d for d in os.listdir(BASE_DIR) if d.isdigit()]
+        years = [d for d in os.listdir(BASE_DIR) if d.isdigit() and os.path.isdir(os.path.join(BASE_DIR, d))]
         for year in years:
             y_key = str(int(year))
             if y_key not in archive_data:
                 archive_data[y_key] = {}
 
-            months = [d for d in os.listdir(os.path.join(BASE_DIR, year)) if d.isdigit()]
+            months = [d for d in os.listdir(os.path.join(BASE_DIR, year)) if d.isdigit() and os.path.isdir(os.path.join(BASE_DIR, year, d))]
             for month in months:
                 m_key = str(int(month))
                 if m_key not in archive_data[y_key]:
@@ -171,34 +209,41 @@ def generate_index():
                             time_str = f"{parts[3][:2]}:{parts[3][2:4]}"
                             file_path = f"{year}/{month}/{file}"
 
-                            page_title = "NYT 新闻"
+                            local_title = "NYT 新闻"
                             try:
                                 with open(os.path.join(BASE_DIR, year, month, file), 'r', encoding='utf-8') as f_html:
                                     content = f_html.read(2000)
                                     start = content.find('<title>')
                                     end = content.find('</title>')
                                     if start != -1 and end != -1:
-                                        page_title = content[start+7:end]
+                                        local_title = content[start+7:end]
                             except:
                                 pass
 
                             if d_key not in archive_data[y_key][m_key]:
                                 archive_data[y_key][m_key][d_key] = []
 
-                            # --- 2. 重新生成数据时，恢复置顶标记 ---
                             item_data = {
                                 "time": time_str,
                                 "path": file_path,
-                                "title": page_title
+                                "title": local_title
                             }
                             if file_path in pinned_paths:
                                 item_data["pinned"] = True
 
-                            archive_data[y_key][m_key][d_key].append(item_data)
+                            # 防止重复追加，如果路径存在则更新，不存在则插入
+                            existing_list = archive_data[y_key][m_key][d_key]
+                            idx = next((i for i, v in enumerate(existing_list) if v["path"] == file_path), -1)
+                            if idx != -1:
+                                existing_list[idx] = item_data
+                            else:
+                                existing_list.append(item_data)
+                            
+                            archive_data[y_key][m_key][d_key] = sorted(existing_list, key=lambda x: x['time'], reverse=True)
                     except Exception:
                         pass
 
-    json_data = json.dumps(archive_data)
+    json_data = json.dumps(archive_data, ensure_ascii=False)
 
     html_template = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -241,7 +286,7 @@ def generate_index():
         .news-item-wrapper { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
         .news-item { flex: 1; background: var(--card); border-radius: 6px; padding: 18px 15px; margin-bottom: 0; display: flex; justify-content: space-between; align-items: center; text-decoration: none; color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.05); overflow: hidden; border-left: 3px solid transparent; transition: border-left 0.2s; }
         .news-item:hover { border-left: 3px solid var(--primary); }
-        .news-item.pinned-item { border-left: 3px solid #f5a623; } /* 置顶UI标记 */
+        .news-item.pinned-item { border-left: 3px solid #f5a623; }
         .news-time { font-size: 13px; font-family: "Georgia", serif; font-weight: 600; flex-shrink: 0; color: var(--primary); }
         .news-title { font-size: 15px; margin-left: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; flex: 1; }
         
@@ -338,7 +383,6 @@ def generate_index():
             });
         }
 
-        // 提取所有的置顶文章
         function getAllPinnedNews() {
             let pinned = [];
             for (let y in archiveData) {
@@ -413,7 +457,6 @@ def generate_index():
                     dayData = archiveData[AppState.year][AppState.month][AppState.day];
                 }
                 
-                // 去重合并：当前天的非置顶数据
                 const currentDayUnpinned = (dayData || []).filter(n => !n.pinned);
                 const itemsToRender = [...allPinned, ...currentDayUnpinned];
                 
@@ -430,7 +473,6 @@ def generate_index():
                         a.innerHTML = `<span class="news-time">${news.time}</span><span class="news-title">${pinEmoji}${news.title}</span>`;
                         wrapper.appendChild(a);
 
-                        // 置顶按钮
                         const pinBtn = document.createElement('button');
                         pinBtn.className = 'pin-btn';
                         pinBtn.innerHTML = news.pinned ? '❌' : '📌';
@@ -445,7 +487,6 @@ def generate_index():
                         };
                         wrapper.appendChild(pinBtn);
 
-                        // 删除按钮
                         const delBtn = document.createElement('button');
                         delBtn.className = 'delete-btn';
                         delBtn.innerHTML = '🗑️';
@@ -455,7 +496,6 @@ def generate_index():
                             e.preventDefault();
                             if(confirm('确认删除此条目并同步删除云端文件吗？')) {
                                 const pathToDelete = news.path;
-                                // 全局查找并删除
                                 let found = false;
                                 for (let y in archiveData) {
                                     for (let m in archiveData[y]) {
@@ -537,17 +577,16 @@ def generate_index():
             lastTap = currentTime;
         });
 
-        // 仅同步 Index 更新（用于保存置顶状态）
         async function syncIndexToGithub() {
-            const ghToken = localStorage.getItem('GH_TOKEN_NYT');
-            const ghOwner = localStorage.getItem('GH_OWNER_NYT');
-            const ghRepo = localStorage.getItem('GH_REPO_NYT');
+            const ghToken = localStorage.getItem('GH_TOKEN_NYT') || localStorage.getItem('GH_TOKEN');
+            const ghOwner = localStorage.getItem('GH_OWNER_NYT') || localStorage.getItem('GH_OWNER');
+            const ghRepo = localStorage.getItem('GH_REPO_NYT') || localStorage.getItem('GH_REPO');
             if (!ghToken || !ghOwner || !ghRepo) return;
 
             try {
                 loadingBar.style.width = '30%';
-                const idxRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html`, {
-                    headers: { 'Authorization': `token ${ghToken}` }
+                const idxRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html?t=${Date.now()}`, {
+                    headers: { 'Authorization': `token ${ghToken}` }, cache: 'no-store'
                 });
                 const idxData = await idxRes.json();
                 const idxContent = decodeURIComponent(escape(atob(idxData.content)));
@@ -577,17 +616,17 @@ def generate_index():
         }
 
         async function syncDeleteToGithub(fileRelPath) {
-            const ghToken = localStorage.getItem('GH_TOKEN_NYT');
-            const ghOwner = localStorage.getItem('GH_OWNER_NYT');
-            const ghRepo = localStorage.getItem('GH_REPO_NYT');
+            const ghToken = localStorage.getItem('GH_TOKEN_NYT') || localStorage.getItem('GH_TOKEN');
+            const ghOwner = localStorage.getItem('GH_OWNER_NYT') || localStorage.getItem('GH_OWNER');
+            const ghRepo = localStorage.getItem('GH_REPO_NYT') || localStorage.getItem('GH_REPO');
             if (!ghToken || !ghOwner || !ghRepo) return;
 
             try {
                 loadingBar.style.width = '10%';
                 
                 const targetFilePath = `docs/${fileRelPath}`;
-                const fileRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/${targetFilePath}`, {
-                    headers: { 'Authorization': `token ${ghToken}` }
+                const fileRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/${targetFilePath}?t=${Date.now()}`, {
+                    headers: { 'Authorization': `token ${ghToken}` }, cache: 'no-store'
                 });
                 
                 if (fileRes.ok) {
@@ -604,8 +643,8 @@ def generate_index():
                 
                 loadingBar.style.width = '50%';
 
-                const idxRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html`, {
-                    headers: { 'Authorization': `token ${ghToken}` }
+                const idxRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html?t=${Date.now()}`, {
+                    headers: { 'Authorization': `token ${ghToken}` }, cache: 'no-store'
                 });
                 const idxData = await idxRes.json();
                 const idxContent = decodeURIComponent(escape(atob(idxData.content)));
@@ -649,7 +688,7 @@ def generate_index():
 
     with open(os.path.join(BASE_DIR, "index.html"), "w", encoding="utf-8") as f:
         f.write(final_html)
-    print("首页 index.html 已更新，置顶功能已加入。")
+    print("首页 index.html 已更新，已完美融合本地及云端数据。")
 
 if __name__ == "__main__":
     os.makedirs(BASE_DIR, exist_ok=True)
