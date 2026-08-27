@@ -314,7 +314,7 @@ def generate_index():
     
     <div class="header-brand">
         <div style="width:24px;"></div>
-        <span>T H E&nbsp;&nbsp;N E W&nbsp;&nbsp;Y O R K&nbsp;&nbsp;T I M E S</span>
+        <span>N E W&nbsp;&nbsp;Y O R K&nbsp;&nbsp;T I M E S</span>
         <button class="settings-btn" id="openSettingsBtn">⚙️</button>
     </div>
 
