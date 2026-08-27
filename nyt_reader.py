@@ -2,10 +2,12 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import json
+import subprocess
 from datetime import datetime, timezone, timedelta
 
 BASE_DIR = "docs"
 tz_utc_8 = timezone(timedelta(hours=8))
+AUTO_PUSH_GITHUB = True  # 开启 Python 端自动 Push 到 GitHub 的功能
 
 def fetch_nyt_news():
     headers = {
@@ -28,7 +30,7 @@ def fetch_nyt_news():
 
         if not article_url:
             print("未找到文章链接。")
-            return
+            return False
 
         record_file = "last_nyt_url.txt"
         last_url = ""
@@ -38,7 +40,7 @@ def fetch_nyt_news():
 
         if article_url == last_url:
             print("头条未更新，本次不生成新文章。")
-            return
+            return False
 
         print(f"发现新突发头条: {article_url}")
         with open(record_file, "w") as f:
@@ -97,11 +99,14 @@ def fetch_nyt_news():
 
         if content_paragraphs:
             save_article(page_title, display_h1, content_paragraphs, current_time, article_url, now)
+            return True
         else:
             print("未提取到有效正文段落。")
+            return False
 
     except Exception as e:
         print(f"抓取错误: {e}")
+        return False
 
 def save_article(page_title, display_h1, paragraphs, pub_date, article_url, now_obj):
     year_str, month_str = str(now_obj.year), str(now_obj.month)
@@ -248,7 +253,20 @@ def generate_index():
         
         .container { max-width: 600px; margin: 0 auto; background: var(--bg); min-height: 100vh; display: flex; flex-direction: column; }
         
-        .header-brand { background: var(--card); padding: 15px 20px 15px 20px; font-weight: bold; font-family: "Georgia", serif; font-size: 1.2rem; border-bottom: 1px solid var(--border); text-align: center; letter-spacing: 1px;}
+        .header-brand { background: var(--card); padding: 15px 20px 15px 20px; font-weight: bold; font-family: "Georgia", serif; font-size: 1.2rem; border-bottom: 1px solid var(--border); text-align: center; letter-spacing: 1px; display: flex; justify-content: space-between; align-items: center;}
+        
+        /* 模态框配置面板样式 */
+        .settings-btn { background: none; border: none; font-size: 20px; cursor: pointer; padding: 5px; outline: none; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 100; justify-content: center; align-items: center; padding: 20px; }
+        .modal-content { background: var(--card); border-radius: 16px; padding: 20px; width: 100%; max-width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
+        .modal-title { margin: 0 0 15px 0; font-size: 18px; font-weight: bold; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; font-weight: bold; }
+        .form-group input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; outline: none; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+        .btn { padding: 8px 16px; border-radius: 8px; border: none; font-size: 14px; font-weight: bold; cursor: pointer; }
+        .btn-cancel { background: #eee; color: #333; }
+        .btn-save { background: var(--primary); color: #fff; }
 
         #loadingBar { height: 3px; background: var(--primary); width: 0%; transition: width 0.3s; position: absolute; top: 0; left: 0; z-index: 30; }
 
@@ -294,7 +312,26 @@ def generate_index():
     <div id="loadingBar"></div>
     <div id="toastMsg" class="toast-msg"></div>
     
-    <div class="header-brand">T H E&nbsp;&nbsp;N E W&nbsp;&nbsp;Y O R K&nbsp;&nbsp;T I M E S</div>
+    <div class="header-brand">
+        <div style="width:24px;"></div>
+        <span>T H E&nbsp;&nbsp;N E W&nbsp;&nbsp;Y O R K&nbsp;&nbsp;T I M E S</span>
+        <button class="settings-btn" id="openSettingsBtn">⚙️</button>
+    </div>
+
+    <!-- 填补遗漏的 GitHub 配置面板 -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal-content">
+            <h3 class="modal-title">GitHub 云端同步配置</h3>
+            <p style="font-size:12px; color:#888; margin-top:-10px; margin-bottom:15px;">填写 Token 即可在网页端直接同步置顶和删除。</p>
+            <div class="form-group"><label>GitHub Personal Access Token</label><input type="password" id="cfgGhToken" placeholder="留空或输入 ghp_..."></div>
+            <div class="form-group"><label>GitHub 用户名</label><input type="text" id="cfgGhOwner" placeholder="留空或输入你的用户名"></div>
+            <div class="form-group"><label>GitHub 仓库名</label><input type="text" id="cfgGhRepo" value="nyt-news-archive"></div>
+            <div class="modal-actions">
+                <button class="btn btn-cancel" id="closeSettingsBtn">取消</button>
+                <button class="btn btn-save" id="saveSettingsBtn">保存配置</button>
+            </div>
+        </div>
+    </div>
 
     <div class="container">
         <div class="controls">
@@ -332,7 +369,6 @@ def generate_index():
 
         const loadingBar = document.getElementById('loadingBar');
         
-        // 此处的初始数据基于 GitHub Pages 静态分发 (可能有延迟)
         let archiveData = /*DATA_START*/REPLACEME_JSON_DATA/*DATA_END*/;
         const today = new Date();
         
@@ -343,7 +379,25 @@ def generate_index():
             deleteMode: false
         };
 
-        // --- 核心修复：引入安全 Base64 解析并后台静默拉取绝对最新版，解决多设备同步 ---
+        // --- 设置面板交互逻辑 ---
+        document.getElementById('openSettingsBtn').addEventListener('click', () => {
+            document.getElementById('cfgGhToken').value = localStorage.getItem('GH_TOKEN_NYT') || '';
+            document.getElementById('cfgGhOwner').value = localStorage.getItem('GH_OWNER_NYT') || '';
+            document.getElementById('cfgGhRepo').value = localStorage.getItem('GH_REPO_NYT') || 'nyt-news-archive';
+            document.getElementById('settingsModal').style.display = 'flex';
+        });
+        document.getElementById('closeSettingsBtn').addEventListener('click', () => { 
+            document.getElementById('settingsModal').style.display = 'none'; 
+        });
+        document.getElementById('saveSettingsBtn').addEventListener('click', () => {
+            localStorage.setItem('GH_TOKEN_NYT', document.getElementById('cfgGhToken').value.trim());
+            localStorage.setItem('GH_OWNER_NYT', document.getElementById('cfgGhOwner').value.trim());
+            localStorage.setItem('GH_REPO_NYT', document.getElementById('cfgGhRepo').value.trim());
+            document.getElementById('settingsModal').style.display = 'none';
+            showToast('✅ 配置已本地保存！');
+        });
+
+        // --- 安全 Base64 解析 ---
         function fromBase64Safe(b64) {
             const bin = atob(b64.replace(/\\s/g, ''));
             const bytes = new Uint8Array(bin.length);
@@ -354,13 +408,12 @@ def generate_index():
         }
 
         async function fetchRealTimeData() {
-            const ghToken = localStorage.getItem('GH_TOKEN_NYT') || localStorage.getItem('GH_TOKEN');
-            const ghOwner = localStorage.getItem('GH_OWNER_NYT') || localStorage.getItem('GH_OWNER');
-            const ghRepo = localStorage.getItem('GH_REPO_NYT') || localStorage.getItem('GH_REPO');
+            const ghToken = localStorage.getItem('GH_TOKEN_NYT');
+            const ghOwner = localStorage.getItem('GH_OWNER_NYT');
+            const ghRepo = localStorage.getItem('GH_REPO_NYT');
             if (!ghToken || !ghOwner || !ghRepo) return;
 
             try {
-                // 走原始 API 直接获取仓库最新文件，无视 Github Pages 的几分钟缓存延迟
                 const res = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html?t=${Date.now()}`, {
                     headers: { 'Authorization': `token ${ghToken}` }, cache: 'no-store'
                 });
@@ -372,21 +425,15 @@ def generate_index():
                     if (dataStart !== -1 && dataEnd !== -1) {
                         const remoteData = JSON.parse(content.substring(dataStart, dataEnd));
                         
-                        // 对比：如果不一致，说明后台有新数据 (在别的设备更改的，或者刚改完页面缓存的)
                         if (JSON.stringify(remoteData) !== JSON.stringify(archiveData)) {
                             archiveData = remoteData;
                             forceRender();
-                            console.log("已后台无缝同步至云端最新数据。");
                         }
                     }
                 }
-            } catch (err) {
-                console.log("后台实时拉取忽略:", err);
-            }
+            } catch (err) {}
         }
-        // 页面打开时，后台静默拉取绝对最新版本
         setTimeout(fetchRealTimeData, 500);
-        // -------------------------------------------------------------
 
         function ensureYearExists(y) {
             const yearSelect = document.getElementById('yearSelect');
@@ -518,9 +565,11 @@ def generate_index():
                         
                         pinBtn.onclick = async (e) => {
                             e.preventDefault();
+                            if (!checkGithubConfig()) return;
+                            
                             news.pinned = !news.pinned;
-                            forceRender(); // 本地 DOM 即刻渲染完毕，不刷新不闪烁
-                            await syncIndexToGithub(); // 提交至云端
+                            forceRender(); 
+                            await syncIndexToGithub(); 
                             showToast(news.pinned ? '📌 已置顶' : '❌ 已取消置顶');
                         };
                         wrapper.appendChild(pinBtn);
@@ -532,6 +581,8 @@ def generate_index():
                         
                         delBtn.onclick = async (e) => {
                             e.preventDefault();
+                            if (!checkGithubConfig()) return;
+
                             if(confirm('确认删除此条目并同步删除云端文件吗？')) {
                                 const pathToDelete = news.path;
                                 let found = false;
@@ -562,7 +613,6 @@ def generate_index():
                     newsList.innerHTML = '<div class="empty-state">No articles found for this date.</div>';
                 }
             } catch (err) { 
-                console.error("内容列表渲染异常:", err); 
                 newsList.innerHTML = '<div class="empty-state">No articles found for this date.</div>';
             }
         }
@@ -614,8 +664,20 @@ def generate_index():
             }
             lastTap = currentTime;
         });
+        
+        // 检查配置，如果没有就弹出面板
+        function checkGithubConfig() {
+            const ghToken = localStorage.getItem('GH_TOKEN_NYT');
+            const ghOwner = localStorage.getItem('GH_OWNER_NYT');
+            const ghRepo = localStorage.getItem('GH_REPO_NYT');
+            if (!ghToken || !ghOwner || !ghRepo) {
+                alert('请先点击右上角 ⚙️ 配置 GitHub 信息，否则无法在网页端执行同步操作！');
+                document.getElementById('settingsModal').style.display = 'flex';
+                return false;
+            }
+            return true;
+        }
 
-        // 借用 X 代码中成熟稳定的 Base64 函数以规避中文编码报错
         function toBase64Safe(str) {
             const bytes = new TextEncoder().encode(str);
             let bin = '';
@@ -627,10 +689,9 @@ def generate_index():
         }
 
         async function syncIndexToGithub() {
-            const ghToken = localStorage.getItem('GH_TOKEN_NYT') || localStorage.getItem('GH_TOKEN');
-            const ghOwner = localStorage.getItem('GH_OWNER_NYT') || localStorage.getItem('GH_OWNER');
-            const ghRepo = localStorage.getItem('GH_REPO_NYT') || localStorage.getItem('GH_REPO');
-            if (!ghToken || !ghOwner || !ghRepo) return;
+            const ghToken = localStorage.getItem('GH_TOKEN_NYT');
+            const ghOwner = localStorage.getItem('GH_OWNER_NYT');
+            const ghRepo = localStorage.getItem('GH_REPO_NYT');
 
             try {
                 loadingBar.style.width = '30%';
@@ -641,7 +702,7 @@ def generate_index():
                 if (!idxRes.ok) throw new Error('Failed to fetch from GitHub');
                 
                 const idxData = await idxRes.json();
-                const idxContent = fromBase64Safe(idxData.content); // 使用新的安全解析
+                const idxContent = fromBase64Safe(idxData.content);
 
                 const dataStart = idxContent.indexOf('/*DATA_START*/') + 14;
                 const dataEnd = idxContent.indexOf('/*DATA_END*/');
@@ -664,17 +725,15 @@ def generate_index():
                 loadingBar.style.width = '100%';
                 setTimeout(() => { loadingBar.style.width = '0%'; }, 1000);
             } catch(e) {
-                console.error("Sync pin status failed", e);
                 loadingBar.style.width = '0%';
-                showToast('❌ 云端同步状态失败');
+                showToast('❌ 云端同步状态失败，请检查配置或网络');
             }
         }
 
         async function syncDeleteToGithub(fileRelPath) {
-            const ghToken = localStorage.getItem('GH_TOKEN_NYT') || localStorage.getItem('GH_TOKEN');
-            const ghOwner = localStorage.getItem('GH_OWNER_NYT') || localStorage.getItem('GH_OWNER');
-            const ghRepo = localStorage.getItem('GH_REPO_NYT') || localStorage.getItem('GH_REPO');
-            if (!ghToken || !ghOwner || !ghRepo) return;
+            const ghToken = localStorage.getItem('GH_TOKEN_NYT');
+            const ghOwner = localStorage.getItem('GH_OWNER_NYT');
+            const ghRepo = localStorage.getItem('GH_REPO_NYT');
 
             try {
                 loadingBar.style.width = '10%';
@@ -723,7 +782,6 @@ def generate_index():
                 loadingBar.style.width = '100%';
                 setTimeout(() => { loadingBar.style.width = '0%'; }, 1000);
             } catch(e) {
-                console.error("Sync delete failed", e);
                 loadingBar.style.width = '0%';
                 showToast('❌ 云端同步删除失败');
             }
@@ -743,9 +801,43 @@ def generate_index():
 
     with open(os.path.join(BASE_DIR, "index.html"), "w", encoding="utf-8") as f:
         f.write(final_html)
-    print("首页 index.html 已更新，已采用完美的后台静默同步逻辑。")
+    print("首页 index.html 已生成！")
+
+
+def git_push_to_github(msg="Auto-archive NYT Headline"):
+    """执行本地命令将修改自动 Push 到 Github"""
+    if not AUTO_PUSH_GITHUB:
+        return
+    print("\n⏳ 正在自动推送变更到 GitHub...")
+    if not os.path.exists(".git"):
+        print("⚠️ 当前目录并非 Git 仓库，跳过自动同步。")
+        return
+    try:
+        subprocess.run(["git", "add", "docs/"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+        if not status.stdout.strip():
+            print("ℹ️ 没有需要推送的更新。")
+            return
+
+        subprocess.run(["git", "commit", "-m", msg], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["git", "push"], check=True)
+        print("✅ 成功同步到 GitHub！网页版约在 1~3 分钟后刷新可见。")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Git 执行失败，错误码: {e.returncode}")
+    except FileNotFoundError:
+        print("❌ 系统找不到 Git，请确认您已安装 Git 并将其加入环境变量中。")
+
 
 if __name__ == "__main__":
     os.makedirs(BASE_DIR, exist_ok=True)
-    fetch_nyt_news()
-    generate_index()
+    
+    # 抓取文章，返回 True 代表有新文章写入
+    has_new_article = fetch_nyt_news()
+    
+    # 如果抓取到了新文章，再执行生成首页和向 GitHub 推送的动作
+    if has_new_article:
+        generate_index()
+        git_push_to_github()
+    else:
+        # 虽然没有新文章，但为了防止 index.html 被误删或初始化，兜底跑一次生成
+        generate_index()
