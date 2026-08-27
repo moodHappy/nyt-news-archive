@@ -1,8 +1,12 @@
 name: Auto Scrape NYT Chinese
 
-# 触发条件：仅支持在 GitHub Actions 网页上手动点击运行
+# 触发条件：
 on:
-  workflow_dispatch:
+  workflow_dispatch:    # 保留网页上手动点击运行的功能
+  push:
+    paths:
+      - 'nyt_reader.py' # 当此 Python 文件发生修改并推送到 GitHub 时，自动触发运行
+      # 如果你有多个py文件，也可以改成匹配所有py文件： - '**/*.py'
 
 jobs:
   build:
