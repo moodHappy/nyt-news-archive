@@ -1,4 +1,3 @@
-
 import requests
 from bs4 import BeautifulSoup
 import os
@@ -49,11 +48,9 @@ def fetch_nyt_news():
         art_res.encoding = 'utf-8'
         art_soup = BeautifulSoup(art_res.text, 'html.parser')
 
-        # --- 核心修复：对齐 JS 版本的双语标题剥离与排雷机制 ---
         zh_title = ""
         en_title = ""
 
-        # 过滤掉 logo 和空标签
         title_tags = art_soup.find_all('h1')
         valid_h1s = [h for h in title_tags if 'logo' not in h.get('class', []) and len(h.text.strip()) > 2]
 
@@ -70,7 +67,6 @@ def fetch_nyt_news():
             else:
                 en_title = valid_h1s[0].text.strip()
 
-        # Meta 兜底
         if not en_title:
             meta_og = art_soup.find('meta', property='og:title')
             if meta_og and meta_og.get('content'):
@@ -78,14 +74,11 @@ def fetch_nyt_news():
             else:
                 en_title = "NYT Chinese News"
 
-        # 清理多余的网站名后缀
         en_title = en_title.replace(' - 纽约时报中文网', '').strip()
         if zh_title:
             zh_title = zh_title.replace(' - 纽约时报中文网', '').strip()
 
-        # 供日历检索的纯净英文标题
         page_title = en_title
-        # 供正文展示的双语换行大标题
         display_h1 = f"{zh_title}<br>{en_title}" if zh_title else en_title
 
         now = datetime.now(tz_utc_8)
@@ -163,7 +156,6 @@ def generate_index():
     pinned_paths = set()
     archive_data = {}
 
-    # --- 核心修复 2：不再抹除旧数据，而是继承合并 ---
     index_path = os.path.join(BASE_DIR, "index.html")
     if os.path.exists(index_path):
         try:
@@ -175,7 +167,7 @@ def generate_index():
                 end = content.find(end_marker)
                 if start != -1 and end != -1:
                     old_json_str = content[start+len(start_marker):end]
-                    archive_data = json.loads(old_json_str) # 继承已有云端数据
+                    archive_data = json.loads(old_json_str)
 
                     for y_data in archive_data.values():
                         for m_data in y_data.values():
@@ -186,7 +178,6 @@ def generate_index():
         except Exception as e:
             print(f"读取历史记录失败: {e}")
 
-    # 将本地扫描的新文件合并进 archive_data
     if os.path.exists(BASE_DIR):
         years = [d for d in os.listdir(BASE_DIR) if d.isdigit() and os.path.isdir(os.path.join(BASE_DIR, d))]
         for year in years:
@@ -232,7 +223,6 @@ def generate_index():
                             if file_path in pinned_paths:
                                 item_data["pinned"] = True
 
-                            # 防止重复追加，如果路径存在则更新，不存在则插入
                             existing_list = archive_data[y_key][m_key][d_key]
                             idx = next((i for i, v in enumerate(existing_list) if v["path"] == file_path), -1)
                             if idx != -1:
@@ -341,39 +331,62 @@ def generate_index():
         }
 
         const loadingBar = document.getElementById('loadingBar');
-        const archiveData = /*DATA_START*/REPLACEME_JSON_DATA/*DATA_END*/;
         
-        // --- 核心修复：引入 localStorage 抵消云端缓存延迟 ---
-        try {
-            let localPinned = JSON.parse(localStorage.getItem('nyt_pinned_paths') || '[]');
-            let localUnpinned = JSON.parse(localStorage.getItem('nyt_unpinned_paths') || '[]');
-            let localDeleted = JSON.parse(localStorage.getItem('nyt_deleted_paths') || '[]');
-
-            for (let y in archiveData) {
-                for (let m in archiveData[y]) {
-                    for (let d in archiveData[y][m]) {
-                        // 应用本地删除缓存
-                        archiveData[y][m][d] = archiveData[y][m][d].filter(news => !localDeleted.includes(news.path));
-                        // 应用本地置顶/取消置顶缓存
-                        archiveData[y][m][d].forEach(news => {
-                            if (localPinned.includes(news.path)) news.pinned = true;
-                            if (localUnpinned.includes(news.path)) news.pinned = false;
-                        });
-                        if (archiveData[y][m][d].length === 0) delete archiveData[y][m][d];
-                    }
-                }
-            }
-        } catch(e) {
-            console.error("恢复本地缓存状态失败", e);
-        }
-
+        // 此处的初始数据基于 GitHub Pages 静态分发 (可能有延迟)
+        let archiveData = /*DATA_START*/REPLACEME_JSON_DATA/*DATA_END*/;
         const today = new Date();
+        
         const AppState = {
             year: today.getFullYear(),
             month: today.getMonth() + 1,
             day: today.getDate(),
             deleteMode: false
         };
+
+        // --- 核心修复：引入安全 Base64 解析并后台静默拉取绝对最新版，解决多设备同步 ---
+        function fromBase64Safe(b64) {
+            const bin = atob(b64.replace(/\\s/g, ''));
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) {
+                bytes[i] = bin.charCodeAt(i);
+            }
+            return new TextDecoder().decode(bytes);
+        }
+
+        async function fetchRealTimeData() {
+            const ghToken = localStorage.getItem('GH_TOKEN_NYT') || localStorage.getItem('GH_TOKEN');
+            const ghOwner = localStorage.getItem('GH_OWNER_NYT') || localStorage.getItem('GH_OWNER');
+            const ghRepo = localStorage.getItem('GH_REPO_NYT') || localStorage.getItem('GH_REPO');
+            if (!ghToken || !ghOwner || !ghRepo) return;
+
+            try {
+                // 走原始 API 直接获取仓库最新文件，无视 Github Pages 的几分钟缓存延迟
+                const res = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html?t=${Date.now()}`, {
+                    headers: { 'Authorization': `token ${ghToken}` }, cache: 'no-store'
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const content = fromBase64Safe(data.content);
+                    const dataStart = content.indexOf('/*DATA_START*/') + 14;
+                    const dataEnd = content.indexOf('/*DATA_END*/');
+                    if (dataStart !== -1 && dataEnd !== -1) {
+                        const remoteData = JSON.parse(content.substring(dataStart, dataEnd));
+                        
+                        // 对比：如果不一致，说明后台有新数据 (在别的设备更改的，或者刚改完页面缓存的)
+                        if (JSON.stringify(remoteData) !== JSON.stringify(archiveData)) {
+                            archiveData = remoteData;
+                            forceRender();
+                            console.log("已后台无缝同步至云端最新数据。");
+                        }
+                    }
+                }
+            } catch (err) {
+                console.log("后台实时拉取忽略:", err);
+            }
+        }
+        // 页面打开时，后台静默拉取绝对最新版本
+        setTimeout(fetchRealTimeData, 500);
+        // -------------------------------------------------------------
 
         function ensureYearExists(y) {
             const yearSelect = document.getElementById('yearSelect');
@@ -506,22 +519,8 @@ def generate_index():
                         pinBtn.onclick = async (e) => {
                             e.preventDefault();
                             news.pinned = !news.pinned;
-                            
-                            // 更新并固化本地缓存状态
-                            let localPinned = JSON.parse(localStorage.getItem('nyt_pinned_paths') || '[]');
-                            let localUnpinned = JSON.parse(localStorage.getItem('nyt_unpinned_paths') || '[]');
-                            if (news.pinned) {
-                                if (!localPinned.includes(news.path)) localPinned.push(news.path);
-                                localUnpinned = localUnpinned.filter(p => p !== news.path);
-                            } else {
-                                if (!localUnpinned.includes(news.path)) localUnpinned.push(news.path);
-                                localPinned = localPinned.filter(p => p !== news.path);
-                            }
-                            localStorage.setItem('nyt_pinned_paths', JSON.stringify(localPinned));
-                            localStorage.setItem('nyt_unpinned_paths', JSON.stringify(localUnpinned));
-
-                            forceRender(); 
-                            await syncIndexToGithub();
+                            forceRender(); // 本地 DOM 即刻渲染完毕，不刷新不闪烁
+                            await syncIndexToGithub(); // 提交至云端
                             showToast(news.pinned ? '📌 已置顶' : '❌ 已取消置顶');
                         };
                         wrapper.appendChild(pinBtn);
@@ -535,14 +534,6 @@ def generate_index():
                             e.preventDefault();
                             if(confirm('确认删除此条目并同步删除云端文件吗？')) {
                                 const pathToDelete = news.path;
-                                
-                                // 更新本地删除缓存
-                                let localDeleted = JSON.parse(localStorage.getItem('nyt_deleted_paths') || '[]');
-                                if (!localDeleted.includes(pathToDelete)) {
-                                    localDeleted.push(pathToDelete);
-                                    localStorage.setItem('nyt_deleted_paths', JSON.stringify(localDeleted));
-                                }
-
                                 let found = false;
                                 for (let y in archiveData) {
                                     for (let m in archiveData[y]) {
@@ -624,6 +615,17 @@ def generate_index():
             lastTap = currentTime;
         });
 
+        // 借用 X 代码中成熟稳定的 Base64 函数以规避中文编码报错
+        function toBase64Safe(str) {
+            const bytes = new TextEncoder().encode(str);
+            let bin = '';
+            const chunkSize = 0x8000;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+                bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+            }
+            return btoa(bin);
+        }
+
         async function syncIndexToGithub() {
             const ghToken = localStorage.getItem('GH_TOKEN_NYT') || localStorage.getItem('GH_TOKEN');
             const ghOwner = localStorage.getItem('GH_OWNER_NYT') || localStorage.getItem('GH_OWNER');
@@ -639,7 +641,7 @@ def generate_index():
                 if (!idxRes.ok) throw new Error('Failed to fetch from GitHub');
                 
                 const idxData = await idxRes.json();
-                const idxContent = decodeURIComponent(escape(atob(idxData.content)));
+                const idxContent = fromBase64Safe(idxData.content); // 使用新的安全解析
 
                 const dataStart = idxContent.indexOf('/*DATA_START*/') + 14;
                 const dataEnd = idxContent.indexOf('/*DATA_END*/');
@@ -652,7 +654,7 @@ def generate_index():
                     headers: { 'Authorization': `token ${ghToken}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         message: `Update index.html pinned status`,
-                        content: btoa(unescape(encodeURIComponent(newIdxContent))),
+                        content: toBase64Safe(newIdxContent),
                         sha: idxData.sha
                     })
                 });
@@ -700,7 +702,7 @@ def generate_index():
                     headers: { 'Authorization': `token ${ghToken}` }, cache: 'no-store'
                 });
                 const idxData = await idxRes.json();
-                const idxContent = decodeURIComponent(escape(atob(idxData.content)));
+                const idxContent = fromBase64Safe(idxData.content);
 
                 const dataStart = idxContent.indexOf('/*DATA_START*/') + 14;
                 const dataEnd = idxContent.indexOf('/*DATA_END*/');
@@ -713,7 +715,7 @@ def generate_index():
                     headers: { 'Authorization': `token ${ghToken}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         message: `Update index.html after deleting file`,
-                        content: btoa(unescape(encodeURIComponent(newIdxContent))),
+                        content: toBase64Safe(newIdxContent),
                         sha: idxData.sha
                     })
                 });
@@ -741,7 +743,7 @@ def generate_index():
 
     with open(os.path.join(BASE_DIR, "index.html"), "w", encoding="utf-8") as f:
         f.write(final_html)
-    print("首页 index.html 已更新，已完美融合本地及云端数据。")
+    print("首页 index.html 已更新，已采用完美的后台静默同步逻辑。")
 
 if __name__ == "__main__":
     os.makedirs(BASE_DIR, exist_ok=True)
