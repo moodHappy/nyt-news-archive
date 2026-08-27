@@ -51,7 +51,7 @@ def fetch_nyt_news():
         # --- 核心修复：对齐 JS 版本的双语标题剥离与排雷机制 ---
         zh_title = ""
         en_title = ""
-        
+
         # 过滤掉 logo 和空标签
         title_tags = art_soup.find_all('h1')
         valid_h1s = [h for h in title_tags if 'logo' not in h.get('class', []) and len(h.text.strip()) > 2]
@@ -59,7 +59,7 @@ def fetch_nyt_news():
         if valid_h1s:
             zh_node = next((h for h in valid_h1s if 'en-title' not in h.get('class', [])), None)
             en_node = next((h for h in valid_h1s if 'en-title' in h.get('class', [])), None)
-            
+
             if zh_node and en_node:
                 zh_title = zh_node.text.strip()
                 en_title = en_node.text.strip()
@@ -161,7 +161,7 @@ def save_article(page_title, display_h1, paragraphs, pub_date, article_url, now_
 def generate_index():
     pinned_paths = set()
     archive_data = {}
-    
+
     # --- 核心修复 2：不再抹除旧数据，而是继承合并 ---
     index_path = os.path.join(BASE_DIR, "index.html")
     if os.path.exists(index_path):
@@ -175,7 +175,7 @@ def generate_index():
                 if start != -1 and end != -1:
                     old_json_str = content[start+len(start_marker):end]
                     archive_data = json.loads(old_json_str) # 继承已有云端数据
-                    
+
                     for y_data in archive_data.values():
                         for m_data in y_data.values():
                             for d_data in m_data.values():
@@ -238,7 +238,7 @@ def generate_index():
                                 existing_list[idx] = item_data
                             else:
                                 existing_list.append(item_data)
-                            
+
                             archive_data[y_key][m_key][d_key] = sorted(existing_list, key=lambda x: x['time'], reverse=True)
                     except Exception:
                         pass
@@ -341,8 +341,32 @@ def generate_index():
 
         const loadingBar = document.getElementById('loadingBar');
         const archiveData = /*DATA_START*/REPLACEME_JSON_DATA/*DATA_END*/;
-        const today = new Date();
         
+        // --- 核心修复：引入 localStorage 抵消云端缓存延迟 ---
+        try {
+            let localPinned = JSON.parse(localStorage.getItem('nyt_pinned_paths') || '[]');
+            let localUnpinned = JSON.parse(localStorage.getItem('nyt_unpinned_paths') || '[]');
+            let localDeleted = JSON.parse(localStorage.getItem('nyt_deleted_paths') || '[]');
+
+            for (let y in archiveData) {
+                for (let m in archiveData[y]) {
+                    for (let d in archiveData[y][m]) {
+                        // 应用本地删除缓存
+                        archiveData[y][m][d] = archiveData[y][m][d].filter(news => !localDeleted.includes(news.path));
+                        // 应用本地置顶/取消置顶缓存
+                        archiveData[y][m][d].forEach(news => {
+                            if (localPinned.includes(news.path)) news.pinned = true;
+                            if (localUnpinned.includes(news.path)) news.pinned = false;
+                        });
+                        if (archiveData[y][m][d].length === 0) delete archiveData[y][m][d];
+                    }
+                }
+            }
+        } catch(e) {
+            console.error("恢复本地缓存状态失败", e);
+        }
+
+        const today = new Date();
         const AppState = {
             year: today.getFullYear(),
             month: today.getMonth() + 1,
@@ -481,6 +505,20 @@ def generate_index():
                         pinBtn.onclick = async (e) => {
                             e.preventDefault();
                             news.pinned = !news.pinned;
+                            
+                            // 更新并固化本地缓存状态
+                            let localPinned = JSON.parse(localStorage.getItem('nyt_pinned_paths') || '[]');
+                            let localUnpinned = JSON.parse(localStorage.getItem('nyt_unpinned_paths') || '[]');
+                            if (news.pinned) {
+                                if (!localPinned.includes(news.path)) localPinned.push(news.path);
+                                localUnpinned = localUnpinned.filter(p => p !== news.path);
+                            } else {
+                                if (!localUnpinned.includes(news.path)) localUnpinned.push(news.path);
+                                localPinned = localPinned.filter(p => p !== news.path);
+                            }
+                            localStorage.setItem('nyt_pinned_paths', JSON.stringify(localPinned));
+                            localStorage.setItem('nyt_unpinned_paths', JSON.stringify(localUnpinned));
+
                             forceRender(); 
                             await syncIndexToGithub();
                             showToast(news.pinned ? '📌 已置顶' : '❌ 已取消置顶');
@@ -496,6 +534,14 @@ def generate_index():
                             e.preventDefault();
                             if(confirm('确认删除此条目并同步删除云端文件吗？')) {
                                 const pathToDelete = news.path;
+                                
+                                // 更新本地删除缓存
+                                let localDeleted = JSON.parse(localStorage.getItem('nyt_deleted_paths') || '[]');
+                                if (!localDeleted.includes(pathToDelete)) {
+                                    localDeleted.push(pathToDelete);
+                                    localStorage.setItem('nyt_deleted_paths', JSON.stringify(localDeleted));
+                                }
+
                                 let found = false;
                                 for (let y in archiveData) {
                                     for (let m in archiveData[y]) {
@@ -588,6 +634,9 @@ def generate_index():
                 const idxRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html?t=${Date.now()}`, {
                     headers: { 'Authorization': `token ${ghToken}` }, cache: 'no-store'
                 });
+                
+                if (!idxRes.ok) throw new Error('Failed to fetch from GitHub');
+                
                 const idxData = await idxRes.json();
                 const idxContent = decodeURIComponent(escape(atob(idxData.content)));
 
@@ -597,7 +646,7 @@ def generate_index():
                 const newIdxContent = idxContent.substring(0, dataStart) + newJsonStr + idxContent.substring(dataEnd);
 
                 loadingBar.style.width = '70%';
-                await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html`, {
+                const putRes = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html`, {
                     method: 'PUT',
                     headers: { 'Authorization': `token ${ghToken}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -606,12 +655,15 @@ def generate_index():
                         sha: idxData.sha
                     })
                 });
+                
+                if (!putRes.ok) throw new Error('Failed to push to GitHub');
+
                 loadingBar.style.width = '100%';
                 setTimeout(() => { loadingBar.style.width = '0%'; }, 1000);
             } catch(e) {
                 console.error("Sync pin status failed", e);
                 loadingBar.style.width = '0%';
-                showToast('❌ 云端同步置顶状态失败');
+                showToast('❌ 云端同步状态失败');
             }
         }
 
