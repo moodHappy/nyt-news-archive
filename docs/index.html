@@ -93,39 +93,62 @@
         }
 
         const loadingBar = document.getElementById('loadingBar');
-        const archiveData = /*DATA_START*/{"2026": {"7": {"6": [{"time": "22:42", "path": "2026/7/2026_7_6_2242_nyt.html", "title": "As Xi Looks to Extend His Rule, He Leans on a Longtime Ally", "pinned": true}]}, "8": {"12": [{"time": "22:00", "path": "2026/8/2026_8_12_2200_nyt.html", "title": "Zhu Rongji, Former Premier Who Pushed China to a Market Economy, Dies at 97"}], "26": [{"time": "20:18", "path": "2026/8/2026_8_26_2018.html", "title": "China Artist Gao Zhen Jailed for 3 Years Over Satirical Mao Sculpture"}]}}}/*DATA_END*/;
         
-        // --- 核心修复：引入 localStorage 抵消云端缓存延迟 ---
-        try {
-            let localPinned = JSON.parse(localStorage.getItem('nyt_pinned_paths') || '[]');
-            let localUnpinned = JSON.parse(localStorage.getItem('nyt_unpinned_paths') || '[]');
-            let localDeleted = JSON.parse(localStorage.getItem('nyt_deleted_paths') || '[]');
-
-            for (let y in archiveData) {
-                for (let m in archiveData[y]) {
-                    for (let d in archiveData[y][m]) {
-                        // 应用本地删除缓存
-                        archiveData[y][m][d] = archiveData[y][m][d].filter(news => !localDeleted.includes(news.path));
-                        // 应用本地置顶/取消置顶缓存
-                        archiveData[y][m][d].forEach(news => {
-                            if (localPinned.includes(news.path)) news.pinned = true;
-                            if (localUnpinned.includes(news.path)) news.pinned = false;
-                        });
-                        if (archiveData[y][m][d].length === 0) delete archiveData[y][m][d];
-                    }
-                }
-            }
-        } catch(e) {
-            console.error("恢复本地缓存状态失败", e);
-        }
-
+        // 此处的初始数据基于 GitHub Pages 静态分发 (可能有延迟)
+        let archiveData = /*DATA_START*/{"2026": {"7": {"6": [{"time": "22:42", "path": "2026/7/2026_7_6_2242_nyt.html", "title": "As Xi Looks to Extend His Rule, He Leans on a Longtime Ally", "pinned": true}]}, "8": {"12": [{"time": "22:00", "path": "2026/8/2026_8_12_2200_nyt.html", "title": "Zhu Rongji, Former Premier Who Pushed China to a Market Economy, Dies at 97"}], "26": [{"time": "20:18", "path": "2026/8/2026_8_26_2018.html", "title": "China Artist Gao Zhen Jailed for 3 Years Over Satirical Mao Sculpture"}]}}}/*DATA_END*/;
         const today = new Date();
+        
         const AppState = {
             year: today.getFullYear(),
             month: today.getMonth() + 1,
             day: today.getDate(),
             deleteMode: false
         };
+
+        // --- 核心修复：引入安全 Base64 解析并后台静默拉取绝对最新版，解决多设备同步 ---
+        function fromBase64Safe(b64) {
+            const bin = atob(b64.replace(/\s/g, ''));
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) {
+                bytes[i] = bin.charCodeAt(i);
+            }
+            return new TextDecoder().decode(bytes);
+        }
+
+        async function fetchRealTimeData() {
+            const ghToken = localStorage.getItem('GH_TOKEN_NYT') || localStorage.getItem('GH_TOKEN');
+            const ghOwner = localStorage.getItem('GH_OWNER_NYT') || localStorage.getItem('GH_OWNER');
+            const ghRepo = localStorage.getItem('GH_REPO_NYT') || localStorage.getItem('GH_REPO');
+            if (!ghToken || !ghOwner || !ghRepo) return;
+
+            try {
+                // 走原始 API 直接获取仓库最新文件，无视 Github Pages 的几分钟缓存延迟
+                const res = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/contents/docs/index.html?t=${Date.now()}`, {
+                    headers: { 'Authorization': `token ${ghToken}` }, cache: 'no-store'
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const content = fromBase64Safe(data.content);
+                    const dataStart = content.indexOf('/*DATA_START*/') + 14;
+                    const dataEnd = content.indexOf('/*DATA_END*/');
+                    if (dataStart !== -1 && dataEnd !== -1) {
+                        const remoteData = JSON.parse(content.substring(dataStart, dataEnd));
+                        
+                        // 对比：如果不一致，说明后台有新数据 (在别的设备更改的，或者刚改完页面缓存的)
+                        if (JSON.stringify(remoteData) !== JSON.stringify(archiveData)) {
+                            archiveData = remoteData;
+                            forceRender();
+                            console.log("已后台无缝同步至云端最新数据。");
+                        }
+                    }
+                }
+            } catch (err) {
+                console.log("后台实时拉取忽略:", err);
+            }
+        }
+        // 页面打开时，后台静默拉取绝对最新版本
+        setTimeout(fetchRealTimeData, 500);
+        // -------------------------------------------------------------
 
         function ensureYearExists(y) {
             const yearSelect = document.getElementById('yearSelect');
@@ -258,22 +281,8 @@
                         pinBtn.onclick = async (e) => {
                             e.preventDefault();
                             news.pinned = !news.pinned;
-                            
-                            // 更新并固化本地缓存状态
-                            let localPinned = JSON.parse(localStorage.getItem('nyt_pinned_paths') || '[]');
-                            let localUnpinned = JSON.parse(localStorage.getItem('nyt_unpinned_paths') || '[]');
-                            if (news.pinned) {
-                                if (!localPinned.includes(news.path)) localPinned.push(news.path);
-                                localUnpinned = localUnpinned.filter(p => p !== news.path);
-                            } else {
-                                if (!localUnpinned.includes(news.path)) localUnpinned.push(news.path);
-                                localPinned = localPinned.filter(p => p !== news.path);
-                            }
-                            localStorage.setItem('nyt_pinned_paths', JSON.stringify(localPinned));
-                            localStorage.setItem('nyt_unpinned_paths', JSON.stringify(localUnpinned));
-
-                            forceRender(); 
-                            await syncIndexToGithub();
+                            forceRender(); // 本地 DOM 即刻渲染完毕，不刷新不闪烁
+                            await syncIndexToGithub(); // 提交至云端
                             showToast(news.pinned ? '📌 已置顶' : '❌ 已取消置顶');
                         };
                         wrapper.appendChild(pinBtn);
@@ -287,14 +296,6 @@
                             e.preventDefault();
                             if(confirm('确认删除此条目并同步删除云端文件吗？')) {
                                 const pathToDelete = news.path;
-                                
-                                // 更新本地删除缓存
-                                let localDeleted = JSON.parse(localStorage.getItem('nyt_deleted_paths') || '[]');
-                                if (!localDeleted.includes(pathToDelete)) {
-                                    localDeleted.push(pathToDelete);
-                                    localStorage.setItem('nyt_deleted_paths', JSON.stringify(localDeleted));
-                                }
-
                                 let found = false;
                                 for (let y in archiveData) {
                                     for (let m in archiveData[y]) {
@@ -376,6 +377,17 @@
             lastTap = currentTime;
         });
 
+        // 借用 X 代码中成熟稳定的 Base64 函数以规避中文编码报错
+        function toBase64Safe(str) {
+            const bytes = new TextEncoder().encode(str);
+            let bin = '';
+            const chunkSize = 0x8000;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+                bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+            }
+            return btoa(bin);
+        }
+
         async function syncIndexToGithub() {
             const ghToken = localStorage.getItem('GH_TOKEN_NYT') || localStorage.getItem('GH_TOKEN');
             const ghOwner = localStorage.getItem('GH_OWNER_NYT') || localStorage.getItem('GH_OWNER');
@@ -391,7 +403,7 @@
                 if (!idxRes.ok) throw new Error('Failed to fetch from GitHub');
                 
                 const idxData = await idxRes.json();
-                const idxContent = decodeURIComponent(escape(atob(idxData.content)));
+                const idxContent = fromBase64Safe(idxData.content); // 使用新的安全解析
 
                 const dataStart = idxContent.indexOf('/*DATA_START*/') + 14;
                 const dataEnd = idxContent.indexOf('/*DATA_END*/');
@@ -404,7 +416,7 @@
                     headers: { 'Authorization': `token ${ghToken}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         message: `Update index.html pinned status`,
-                        content: btoa(unescape(encodeURIComponent(newIdxContent))),
+                        content: toBase64Safe(newIdxContent),
                         sha: idxData.sha
                     })
                 });
@@ -452,7 +464,7 @@
                     headers: { 'Authorization': `token ${ghToken}` }, cache: 'no-store'
                 });
                 const idxData = await idxRes.json();
-                const idxContent = decodeURIComponent(escape(atob(idxData.content)));
+                const idxContent = fromBase64Safe(idxData.content);
 
                 const dataStart = idxContent.indexOf('/*DATA_START*/') + 14;
                 const dataEnd = idxContent.indexOf('/*DATA_END*/');
@@ -465,7 +477,7 @@
                     headers: { 'Authorization': `token ${ghToken}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         message: `Update index.html after deleting file`,
-                        content: btoa(unescape(encodeURIComponent(newIdxContent))),
+                        content: toBase64Safe(newIdxContent),
                         sha: idxData.sha
                     })
                 });
